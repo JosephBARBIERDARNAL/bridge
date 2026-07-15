@@ -1,0 +1,85 @@
+namespace bridge_core {};
+
+dictionary ChatSummary {
+    string id;
+    string title;
+    string created_at;
+    string updated_at;
+};
+
+dictionary Message {
+    string id;
+    string chat_id;
+    string role;
+    string content;
+    string status;
+    string created_at;
+};
+
+dictionary ChatDetail {
+    ChatSummary chat;
+    sequence<Message> messages;
+};
+
+dictionary HealthStatus {
+    string gateway;
+    string database;
+    string ollama;
+    string model;
+    boolean model_available;
+};
+
+dictionary StreamFailure {
+    string code;
+    string message;
+    boolean retryable;
+};
+
+[Error]
+enum BridgeError {
+    "InvalidConfiguration",
+    "Unauthorized",
+    "NotFound",
+    "Conflict",
+    "Unavailable",
+    "InvalidResponse",
+    "RequestFailed",
+};
+
+callback interface MessageStreamListener {
+    void on_started(string user_message_id, string assistant_message_id);
+    void on_delta(string assistant_message_id, string text);
+    void on_completed(Message message);
+    void on_error(StreamFailure error);
+};
+
+interface RequestHandle {
+    void cancel();
+};
+
+interface GemmaClient {
+    [Throws=BridgeError]
+    constructor(string base_url, string token);
+
+    [Throws=BridgeError]
+    HealthStatus health();
+
+    [Throws=BridgeError]
+    sequence<ChatSummary> list_chats();
+
+    [Throws=BridgeError]
+    ChatSummary create_chat();
+
+    [Throws=BridgeError]
+    ChatDetail get_chat(string chat_id);
+
+    [Throws=BridgeError]
+    ChatSummary rename_chat(string chat_id, string title);
+
+    [Throws=BridgeError]
+    void delete_chat(string chat_id);
+
+    RequestHandle send_message(string chat_id, string content, MessageStreamListener listener);
+    RequestHandle retry_message(string chat_id, string user_message_id, MessageStreamListener listener);
+};
+

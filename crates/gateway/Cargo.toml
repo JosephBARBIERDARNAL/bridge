@@ -1,0 +1,27 @@
+[package]
+name = "bridge-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-stream.workspace = true
+axum.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+ollama-rs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+subtle = "2.6"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3.20"
+tower = { version = "0.5", features = ["util"] }
+

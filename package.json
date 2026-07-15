@@ -1,0 +1,17 @@
+{
+  "name": "bridge-monorepo",
+  "private": true,
+  "packageManager": "bun@1.3.7",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "bun --cwd apps/bridge dev",
+    "dev:real": "bun --cwd apps/bridge dev:real",
+    "test": "bun --cwd apps/bridge test",
+    "typecheck": "bun --cwd apps/bridge typecheck",
+    "build:web": "bun --cwd apps/bridge build:web",
+    "android": "bun --cwd apps/bridge android",
+    "apk": "bun --cwd apps/bridge apk"
+  }
+}

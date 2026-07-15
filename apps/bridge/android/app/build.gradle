@@ -1,0 +1,97 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+def repoRoot = file("../../../..")
+def uniffiOutput = layout.buildDirectory.dir("generated/source/uniffi/kotlin")
+def hermesPlatform = System.getProperty("os.name").toLowerCase().contains("mac") ? "osx-bin" : "linux64-bin"
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+react {
+    root = file("../..")
+    reactNativeDir = file("../../node_modules/react-native")
+    codegenDir = file("../../node_modules/@react-native/codegen")
+    cliFile = file("../../node_modules/react-native/cli.js")
+    nodeExecutableAndArgs = ["bun"]
+    hermesCommand = file("../../node_modules/hermes-compiler/hermesc/${hermesPlatform}/hermesc").absolutePath
+    // Browser preview is the hot-reload workflow. Android debug APKs are
+    // intentionally standalone so wireless installs never depend on Metro.
+    debuggableVariants = []
+    autolinkLibrariesWithApp()
+}
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+    namespace "app.bridge.chat"
+
+    defaultConfig {
+        applicationId "app.bridge.chat"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    sourceSets.main.java.srcDir(uniffiOutput)
+
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            release {
+                storeFile file(keystoreProperties["storeFile"])
+                storePassword keystoreProperties["storePassword"]
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+        }
+        release {
+            if (keystorePropertiesFile.exists()) signingConfig signingConfigs.release
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+    }
+
+    packagingOptions {
+        jniLibs.useLegacyPackaging = false
+        resources.excludes += ["META-INF/AL2.0", "META-INF/LGPL2.1"]
+    }
+}
+
+tasks.register("generateUniFfiBindings", Exec) {
+    workingDir repoRoot
+    commandLine "cargo", "run", "-p", "bridge-core", "--bin", "uniffi-bindgen", "--", "generate",
+        "crates/android-core/src/bridge_core.udl", "--language", "kotlin", "--out-dir", uniffiOutput.get().asFile.absolutePath, "--no-format"
+    inputs.files(fileTree("${repoRoot}/crates/android-core/src"))
+    outputs.dir(uniffiOutput)
+}
+
+tasks.register("buildRustArm64", Exec) {
+    workingDir repoRoot
+    commandLine "cargo", "ndk", "-t", "arm64-v8a", "-o", "apps/bridge/android/app/src/main/jniLibs", "build", "-p", "bridge-core", "--release"
+    inputs.files(fileTree("${repoRoot}/crates/android-core/src"))
+    outputs.file("src/main/jniLibs/arm64-v8a/libbridge_core.so")
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("generateUniFfiBindings", "buildRustArm64")
+}
+
+dependencies {
+    implementation("com.facebook.react:react-android")
+    implementation("com.facebook.react:hermes-android")
+    implementation("net.java.dev.jna:jna:5.17.0@aar")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+}

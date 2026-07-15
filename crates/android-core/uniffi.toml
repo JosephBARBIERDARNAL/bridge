@@ -1,0 +1,4 @@
+[bindings.kotlin]
+package_name = "app.bridge.chat.core"
+cdylib_name = "bridge_core"
+

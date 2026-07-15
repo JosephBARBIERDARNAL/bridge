@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+VERSION="9.3.1"
+DIST="$ROOT/.gradle-dist/gradle-$VERSION"
+ZIP="$ROOT/.gradle-dist/gradle-$VERSION-bin.zip"
+export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$ROOT/.gradle-user-home}"
+
+if [[ ! -x "$DIST/bin/gradle" ]]; then
+  mkdir -p "$ROOT/.gradle-dist"
+  curl --fail --location --retry 3 "https://services.gradle.org/distributions/gradle-$VERSION-bin.zip" --output "$ZIP"
+  unzip -q -o "$ZIP" -d "$ROOT/.gradle-dist"
+fi
+
+exec "$DIST/bin/gradle" --project-dir "$ROOT" "$@"

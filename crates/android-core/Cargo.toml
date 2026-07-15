@@ -1,0 +1,30 @@
+[package]
+name = "bridge-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+futures-util.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uniffi.workspace = true
+url.workspace = true
+
+[build-dependencies]
+uniffi = { workspace = true, features = ["build"] }
+
+[dev-dependencies]
+axum.workspace = true
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
