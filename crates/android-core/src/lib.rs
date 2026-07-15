@@ -124,14 +124,14 @@ impl Drop for RequestHandle {
     }
 }
 
-pub struct GemmaClient {
+pub struct BridgeClient {
     base_url: Url,
     token: String,
     http: reqwest::Client,
     runtime: Runtime,
 }
 
-impl GemmaClient {
+impl BridgeClient {
     pub fn new(base_url: String, token: String) -> Result<Self, BridgeError> {
         let mut base_url = Url::parse(&base_url).map_err(|_| BridgeError::InvalidConfiguration)?;
         if base_url.scheme() != "https" && !is_loopback(&base_url) {
@@ -407,9 +407,9 @@ mod tests {
     #[test]
     fn requires_https_away_from_loopback() {
         assert!(matches!(
-            GemmaClient::new("http://example.com".into(), "x".repeat(32)),
+            BridgeClient::new("http://example.com".into(), "x".repeat(32)),
             Err(BridgeError::InvalidConfiguration)
         ));
-        assert!(GemmaClient::new("http://127.0.0.1:8787".into(), "x".repeat(32)).is_ok());
+        assert!(BridgeClient::new("http://127.0.0.1:8787".into(), "x".repeat(32)).is_ok());
     }
 }

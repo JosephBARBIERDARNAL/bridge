@@ -2,11 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Appearance,
+  Easing,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -26,21 +31,28 @@ import { dark, light } from "./theme";
 
 const client = createClient();
 const empty =
-  "Start a conversation with Gemma 4. Your messages stay on your Mac.";
+  "Start a conversation with your local model. Your messages stay on your Mac.";
 
 export default function App() {
   const systemDark = Appearance.getColorScheme() === "dark";
   const [darkMode, setDarkMode] = useState(systemDark);
   const colors = darkMode ? dark : light;
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const topInset =
+    Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 32) : 0;
+  const styles = useMemo(
+    () => makeStyles(colors, topInset),
+    [colors, topInset],
+  );
   const { width } = useWindowDimensions();
   const compact = width < 760;
   const [drawer, setDrawer] = useState(!compact);
+  const drawerProgress = useRef(new Animated.Value(drawer ? 1 : 0)).current;
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [activeId, setActiveId] = useState<string>();
+  const activeIdRef = useRef<string | undefined>(undefined);
   const [messages, setMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busyChats, setBusyChats] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<StreamFailure>();
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState(false);
@@ -50,17 +62,37 @@ export default function App() {
     "https://your-mac.your-tailnet.ts.net",
   );
   const [token, setToken] = useState("");
-  const request = useRef<RequestHandle | undefined>(undefined);
+  const [model, setModel] = useState("gemma4:26b");
+  const requests = useRef(new Map<string, RequestHandle>());
   const scroll = useRef<ScrollView>(null);
+  const skipNextLoad = useRef<string | undefined>(undefined);
+  const busy = activeId ? busyChats.has(activeId) : false;
+
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  useEffect(() => {
+    Animated.timing(drawerProgress, {
+      toValue: drawer ? 1 : 0,
+      duration: drawer ? 240 : 190,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [drawer, drawerProgress]);
 
   const refreshChats = async (selectFirst = false) => {
     const values = await client.listChats();
     setChats(values);
-    if (selectFirst && !activeId && values[0]) setActiveId(values[0].id);
+    if (selectFirst && !activeIdRef.current && values[0])
+      selectChat(values[0].id);
   };
 
   useEffect(() => {
-    void refreshChats(true)
+    void Promise.all([
+      refreshChats(true),
+      client.health().then((status) => setModel(status.model)),
+    ])
       .catch((value) => {
         showError(value);
         if (Platform.OS !== "web") setSettings(true);
@@ -70,19 +102,63 @@ export default function App() {
   useEffect(() => {
     if (!activeId) {
       setMessages([]);
+      setLoading(false);
       return;
     }
+    if (skipNextLoad.current === activeId) {
+      skipNextLoad.current = undefined;
+      setLoading(false);
+      if (compact) setDrawer(false);
+      return;
+    }
+    let current = true;
     setLoading(true);
     void client
       .getChat(activeId)
-      .then((detail) => setMessages(detail.messages))
-      .catch(showError)
-      .finally(() => setLoading(false));
+      .then((detail) => {
+        if (current && activeIdRef.current === activeId)
+          setMessages(
+            detail.messages.filter((message) => message.chat_id === activeId),
+          );
+      })
+      .catch((value) => {
+        if (current && activeIdRef.current === activeId) showError(value);
+      })
+      .finally(() => {
+        if (current && activeIdRef.current === activeId) setLoading(false);
+      });
     if (compact) setDrawer(false);
+    return () => {
+      current = false;
+    };
   }, [activeId]);
   useEffect(() => {
     if (busy) scroll.current?.scrollToEnd({ animated: true });
   }, [messages, busy]);
+
+  useEffect(() => {
+    const subscription = Keyboard.addListener("keyboardDidShow", () => {
+      scroll.current?.scrollToEnd({ animated: true });
+    });
+    return () => subscription.remove();
+  }, []);
+
+  function setChatBusy(chatId: string, value: boolean) {
+    setBusyChats((current) => {
+      const next = new Set(current);
+      if (value) next.add(chatId);
+      else next.delete(chatId);
+      return next;
+    });
+  }
+
+  function selectChat(chatId: string, fresh = false) {
+    activeIdRef.current = chatId;
+    setError(undefined);
+    setMessages([]);
+    if (fresh) skipNextLoad.current = chatId;
+    setActiveId(chatId);
+  }
 
   function showError(value: unknown) {
     setError({
@@ -95,8 +171,11 @@ export default function App() {
   async function newChat() {
     try {
       const chat = await client.createChat();
-      setChats((current) => [chat, ...current]);
-      setActiveId(chat.id);
+      setChats((current) => [
+        chat,
+        ...current.filter((value) => value.id !== chat.id),
+      ]);
+      selectChat(chat.id, true);
     } catch (value) {
       showError(value);
     }
@@ -133,7 +212,7 @@ export default function App() {
     if (activeId) return activeId;
     const chat = await client.createChat();
     setChats((current) => [chat, ...current]);
-    setActiveId(chat.id);
+    selectChat(chat.id, true);
     return chat.id;
   }
 
@@ -152,15 +231,16 @@ export default function App() {
       };
       setPrompt("");
       setError(undefined);
-      setBusy(true);
+      setChatBusy(chatId, true);
       setMessages((current) => [...current, user]);
-      request.current = client.sendMessage(
+      const handle = client.sendMessage(
         chatId,
         content,
         streamListener(chatId),
       );
+      requests.current.set(chatId, handle);
     } catch (value) {
-      setBusy(false);
+      if (activeIdRef.current) setChatBusy(activeIdRef.current, false);
       showError(value);
     }
   }
@@ -168,9 +248,12 @@ export default function App() {
   function streamListener(chatId: string) {
     return {
       onStarted(userId: string, assistantId: string) {
+        if (activeIdRef.current !== chatId) return;
         setMessages((current) => [
           ...current.map((value) =>
-            value.id.startsWith("pending-") ? { ...value, id: userId } : value,
+            value.chat_id === chatId && value.id.startsWith("pending-")
+              ? { ...value, id: userId }
+              : value,
           ),
           {
             id: assistantId,
@@ -183,6 +266,7 @@ export default function App() {
         ]);
       },
       onDelta(assistantId: string, text: string) {
+        if (activeIdRef.current !== chatId) return;
         setMessages((current) =>
           current.map((value) =>
             value.id === assistantId
@@ -192,23 +276,31 @@ export default function App() {
         );
       },
       onCompleted(message: Message) {
-        setMessages((current) =>
-          current.map((value) => (value.id === message.id ? message : value)),
-        );
-        setBusy(false);
+        if (activeIdRef.current === chatId)
+          setMessages((current) =>
+            current.map((value) =>
+              value.id === message.id && message.chat_id === chatId
+                ? message
+                : value,
+            ),
+          );
+        requests.current.delete(chatId);
+        setChatBusy(chatId, false);
         void refreshChats();
       },
       onError(value: StreamFailure) {
-        setError(value);
-        setBusy(false);
+        if (activeIdRef.current === chatId) setError(value);
+        requests.current.delete(chatId);
+        setChatBusy(chatId, false);
       },
     };
   }
 
   function stop() {
-    request.current?.cancel();
-    request.current = undefined;
-    setBusy(false);
+    if (!activeId) return;
+    requests.current.get(activeId)?.cancel();
+    requests.current.delete(activeId);
+    setChatBusy(activeId, false);
   }
 
   function retryLast() {
@@ -218,12 +310,13 @@ export default function App() {
       .find((message) => message.role === "user");
     if (!user) return;
     setError(undefined);
-    setBusy(true);
-    request.current = client.retryMessage(
+    setChatBusy(activeId, true);
+    const handle = client.retryMessage(
       activeId,
       user.id,
       streamListener(activeId),
     );
+    requests.current.set(activeId, handle);
   }
 
   async function saveSettings() {
@@ -232,23 +325,57 @@ export default function App() {
     setSettingsError(undefined);
     try {
       if (client.configure) await client.configure(baseUrl.trim(), token);
-      await client.health();
+      const health = await client.health();
+      setModel(health.model);
       setSettings(false);
       setError(undefined);
       await refreshChats(true);
     } catch (value) {
-      setSettingsError(
-        value instanceof Error ? value.message : String(value),
-      );
+      setSettingsError(value instanceof Error ? value.message : String(value));
     } finally {
       setSettingsBusy(false);
     }
   }
 
   return (
-    <View style={styles.app}>
-      {drawer && (
-        <View style={[styles.sidebar, compact && styles.sidebarOverlay]}>
+    <SafeAreaView style={styles.app}>
+      {compact && (
+        <Animated.View
+          pointerEvents={drawer ? "auto" : "none"}
+          style={[styles.drawerBackdrop, { opacity: drawerProgress }]}
+        >
+          <Pressable
+            style={styles.backdropPressable}
+            onPress={() => setDrawer(false)}
+          />
+        </Animated.View>
+      )}
+      <Animated.View
+        pointerEvents={drawer ? "auto" : "none"}
+        style={[
+          styles.drawerShell,
+          compact && styles.sidebarOverlay,
+          compact
+            ? {
+                opacity: drawerProgress,
+                transform: [
+                  {
+                    translateX: drawerProgress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-292, 0],
+                    }),
+                  },
+                ],
+              }
+            : {
+                width: drawerProgress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, 292],
+                }),
+              },
+        ]}
+      >
+        <View style={styles.sidebar}>
           <View style={styles.brandRow}>
             <View style={styles.logo}>
               <Text style={styles.logoText}>B</Text>
@@ -269,7 +396,7 @@ export default function App() {
                   styles.chatItem,
                   activeId === chat.id && styles.chatActive,
                 ]}
-                onPress={() => setActiveId(chat.id)}
+                onPress={() => selectChat(chat.id)}
               >
                 <Text numberOfLines={1} style={styles.chatTitle}>
                   {chat.title}
@@ -304,20 +431,29 @@ export default function App() {
             <Text style={styles.secondaryText}>Private · Mac hosted</Text>
           </View>
         </View>
-      )}
+      </Animated.View>
       <KeyboardAvoidingView
         style={styles.main}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        behavior={
+          Platform.OS === "ios"
+            ? "padding"
+            : Platform.OS === "android"
+              ? "height"
+              : undefined
+        }
       >
         <View style={styles.header}>
-          <Pressable onPress={() => setDrawer((value) => !value)}>
+          <Pressable
+            onPress={() => setDrawer((value) => !value)}
+            style={({ pressed }) => pressed && styles.pressed}
+          >
             <Text style={styles.icon}>☰</Text>
           </Pressable>
           <View>
             <Text style={styles.headerTitle}>
               {chats.find((chat) => chat.id === activeId)?.title ?? "New chat"}
             </Text>
-            <Text style={styles.model}>Gemma 4 · 26B</Text>
+            <Text style={styles.model}>{formatModelName(model)}</Text>
           </View>
           <View style={styles.online}>
             <Text style={styles.onlineText}>● Local</Text>
@@ -328,6 +464,9 @@ export default function App() {
           style={styles.messages}
           contentContainerStyle={styles.messageContent}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={
+            Platform.OS === "ios" ? "interactive" : "on-drag"
+          }
         >
           {loading ? (
             <ActivityIndicator color={colors.text} />
@@ -369,9 +508,14 @@ export default function App() {
               multiline
               value={prompt}
               onChangeText={setPrompt}
-              placeholder="Message Gemma 4…"
+              placeholder={`Message ${formatModelName(model)}…`}
               placeholderTextColor={colors.muted}
               style={styles.input}
+              onFocus={() =>
+                requestAnimationFrame(() =>
+                  scroll.current?.scrollToEnd({ animated: true }),
+                )
+              }
               onKeyPress={(event) => {
                 if (
                   Platform.OS === "web" &&
@@ -395,7 +539,7 @@ export default function App() {
             </Pressable>
           </View>
           <Text style={styles.disclaimer}>
-            Gemma can make mistakes. Your conversations stay on your Mac.
+            AI models can make mistakes. Your conversations stay on your Mac.
           </Text>
         </View>
       </KeyboardAvoidingView>
@@ -458,7 +602,7 @@ export default function App() {
           </View>
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -472,8 +616,33 @@ function MessageView({
   colors: typeof light;
 }) {
   const user = message.role === "user";
+  const entrance = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(entrance, {
+      toValue: 1,
+      duration: 180,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+  }, [entrance]);
   return (
-    <View style={[styles.messageRow, user && styles.userRow]}>
+    <Animated.View
+      style={[
+        styles.messageRow,
+        user && styles.userRow,
+        {
+          opacity: entrance,
+          transform: [
+            {
+              translateY: entrance.interpolate({
+                inputRange: [0, 1],
+                outputRange: [5, 0],
+              }),
+            },
+          ],
+        },
+      ]}
+    >
       {!user && (
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>B</Text>
@@ -495,18 +664,33 @@ function MessageView({
           <Text style={styles.failed}>Generation interrupted</Text>
         )}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
 const promptDialog = (title: string, value: string) =>
   globalThis.prompt?.(title, value);
 
-function makeStyles(c: typeof light) {
+function formatModelName(model: string) {
+  return model.replace(":", " · ");
+}
+
+function makeStyles(c: typeof light, topInset: number) {
   return StyleSheet.create({
-    app: { flex: 1, flexDirection: "row", backgroundColor: c.background },
+    app: {
+      flex: 1,
+      flexDirection: "row",
+      backgroundColor: c.background,
+      paddingTop: topInset,
+    },
+    drawerShell: {
+      width: 292,
+      overflow: "hidden",
+      zIndex: 5,
+    },
     sidebar: {
       width: 292,
+      height: "100%",
       backgroundColor: c.sidebar,
       padding: 14,
       borderRightWidth: 1,
@@ -522,6 +706,13 @@ function makeStyles(c: typeof light) {
       shadowOpacity: 0.25,
       shadowRadius: 20,
     },
+    drawerBackdrop: {
+      position: "absolute",
+      inset: 0,
+      backgroundColor: "#00000045",
+      zIndex: 4,
+    } as never,
+    backdropPressable: { flex: 1 },
     brandRow: {
       height: 52,
       flexDirection: "row",
@@ -539,6 +730,7 @@ function makeStyles(c: typeof light) {
     logoText: { color: c.accentText, fontWeight: "800" },
     brand: { color: c.text, fontSize: 18, fontWeight: "700", flex: 1 },
     icon: { fontSize: 22, color: c.text, padding: 8 },
+    pressed: { opacity: 0.55 },
     newButton: {
       backgroundColor: c.accent,
       paddingVertical: 13,

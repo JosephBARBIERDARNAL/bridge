@@ -2,7 +2,7 @@ package app.bridge.chat
 
 import app.bridge.chat.core.ChatDetail
 import app.bridge.chat.core.ChatSummary
-import app.bridge.chat.core.GemmaClient
+import app.bridge.chat.core.BridgeClient
 import app.bridge.chat.core.HealthStatus
 import app.bridge.chat.core.Message
 import app.bridge.chat.core.MessageStreamListener
@@ -28,13 +28,13 @@ class BridgeCoreModule(private val context: ReactApplicationContext) : ReactCont
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val store = CredentialStore(context)
     private val requests = ConcurrentHashMap<String, RequestHandle>()
-    @Volatile private var client: GemmaClient? = store.load()?.let { runCatching { GemmaClient(it.baseUrl, it.token) }.getOrNull() }
+    @Volatile private var client: BridgeClient? = store.load()?.let { runCatching { BridgeClient(it.baseUrl, it.token) }.getOrNull() }
 
     override fun getName(): String = "BridgeCore"
 
     @ReactMethod
     fun configure(baseUrl: String, token: String, promise: Promise) = launch(promise) {
-        val configured = GemmaClient(baseUrl, token)
+        val configured = BridgeClient(baseUrl, token)
         client?.close()
         client = configured
         store.save(baseUrl, token)
@@ -99,4 +99,3 @@ class BridgeCoreModule(private val context: ReactApplicationContext) : ReactCont
     private fun healthMap(value: HealthStatus) = Arguments.createMap().apply { putString("gateway", value.gateway); putString("database", value.database); putString("ollama", value.ollama); putString("model", value.model); putBoolean("model_available", value.modelAvailable) }
     private fun errorMap(value: StreamFailure) = Arguments.createMap().apply { putString("code", value.code); putString("message", value.message); putBoolean("retryable", value.retryable) }
 }
-

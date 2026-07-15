@@ -489,6 +489,16 @@ mod tests {
 
         let response = app
             .clone()
+            .oneshot(authorized("GET", &format!("/v1/chats/{id}"), Body::empty()))
+            .await
+            .unwrap();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let detail: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(detail["chat"]["id"], id);
+        assert_eq!(detail["messages"], serde_json::json!([]));
+
+        let response = app
+            .clone()
             .oneshot(authorized(
                 "PATCH",
                 &format!("/v1/chats/{id}"),
@@ -516,6 +526,64 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn keeps_chat_histories_isolated() {
+        let directory = tempdir().unwrap().keep();
+        let state = AppState::for_test(&directory.join("test.db"), TOKEN)
+            .await
+            .unwrap();
+        let pool = state.pool.clone();
+        let app = router(state);
+
+        let first_response = app
+            .clone()
+            .oneshot(authorized("POST", "/v1/chats", Body::empty()))
+            .await
+            .unwrap();
+        let first_bytes = first_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let first: serde_json::Value = serde_json::from_slice(&first_bytes).unwrap();
+        let first_id = first["id"].as_str().unwrap();
+
+        let second_response = app
+            .clone()
+            .oneshot(authorized("POST", "/v1/chats", Body::empty()))
+            .await
+            .unwrap();
+        let second_bytes = second_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        let second: serde_json::Value = serde_json::from_slice(&second_bytes).unwrap();
+        let second_id = second["id"].as_str().unwrap();
+
+        sqlx::query("INSERT INTO messages(id, chat_id, role, content, status, created_at) VALUES ('first-message', ?, 'user', 'private context', 'complete', ?)")
+            .bind(first_id)
+            .bind(Utc::now().to_rfc3339())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(authorized(
+                "GET",
+                &format!("/v1/chats/{second_id}"),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let detail: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(detail["chat"]["id"], second_id);
+        assert_eq!(detail["messages"], serde_json::json!([]));
     }
 
     #[test]

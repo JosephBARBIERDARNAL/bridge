@@ -30,7 +30,7 @@ const chats = new Map<string, ChatDetail>([
           status: "complete",
           created_at: now(),
           content:
-            "Your private **Gemma 4** assistant is ready.\n\nThis browser preview is using mock data.",
+            "Your private local assistant is ready.\n\nThis browser preview is using mock data.",
         },
       ],
     },
@@ -130,7 +130,7 @@ export class MockBridgeClient implements BridgeClient {
     };
     detail.messages.push(assistant);
     listener.onStarted(user.id, assistant.id);
-    const response = `This is a local preview response to “${user.content}”. In real mode, these tokens stream securely from Gemma 4 running on your Mac.`;
+    const response = `This is a local preview response to “${user.content}”. In real mode, these tokens stream securely from the model running on your Mac.`;
     void (async () => {
       for (const token of response.split(/(?<=\s)/)) {
         await delay(35);

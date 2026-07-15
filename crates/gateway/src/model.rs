@@ -21,7 +21,6 @@ pub struct Message {
 
 #[derive(Debug, Serialize)]
 pub struct ChatDetail {
-    #[serde(flatten)]
     pub chat: ChatSummary,
     pub messages: Vec<Message>,
 }

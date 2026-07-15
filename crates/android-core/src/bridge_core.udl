@@ -57,7 +57,7 @@ interface RequestHandle {
     void cancel();
 };
 
-interface GemmaClient {
+interface BridgeClient {
     [Throws=BridgeError]
     constructor(string base_url, string token);
 
@@ -82,4 +82,3 @@ interface GemmaClient {
     RequestHandle send_message(string chat_id, string content, MessageStreamListener listener);
     RequestHandle retry_message(string chat_id, string user_message_id, MessageStreamListener listener);
 };
-
