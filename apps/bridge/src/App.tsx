@@ -690,11 +690,6 @@ function MessageView({
         },
       ]}
     >
-      {!user && (
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>B</Text>
-        </View>
-      )}
       <View style={[styles.messageBubble, user && styles.userBubble]}>
         {user ? (
           <Text selectable style={styles.messageText}>
@@ -722,6 +717,8 @@ function makeStyles(c: typeof light, topInset: number) {
   return StyleSheet.create({
     app: {
       flex: 1,
+      width: "100%",
+      minWidth: 0,
       flexDirection: "row",
       backgroundColor: c.background,
       paddingTop: topInset,
@@ -813,6 +810,7 @@ function makeStyles(c: typeof light, topInset: number) {
     messages: { flex: 1, minWidth: 0 },
     messageContent: {
       width: "100%",
+      minWidth: 0,
       maxWidth: 820,
       alignSelf: "center",
       paddingHorizontal: 20,
@@ -846,15 +844,6 @@ function makeStyles(c: typeof light, topInset: number) {
       marginBottom: 24,
     },
     userRow: { justifyContent: "flex-end" },
-    avatar: {
-      width: 28,
-      height: 28,
-      borderRadius: 9,
-      backgroundColor: c.accent,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    avatarText: { color: c.accentText, fontWeight: "800", fontSize: 12 },
     messageBubble: { maxWidth: "88%", flexShrink: 1 },
     userBubble: {
       backgroundColor: c.user,
@@ -904,6 +893,7 @@ function makeStyles(c: typeof light, topInset: number) {
       color: c.text,
       flex: 1,
       flexShrink: 1,
+      width: 0,
       minWidth: 0,
       minHeight: 38,
       maxHeight: 150,
