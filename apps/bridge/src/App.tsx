@@ -7,6 +7,9 @@ import {
   Easing,
   Keyboard,
   KeyboardAvoidingView,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  PanResponder,
   Platform,
   Pressable,
   SafeAreaView,
@@ -19,6 +22,11 @@ import {
   View,
 } from "react-native";
 import MarkdownText from "./MarkdownText";
+import {
+  isNearBottom,
+  shouldClaimHistorySwipe,
+  shouldOpenHistoryDrawer,
+} from "./chatUi";
 import { createClient } from "./client";
 import type {
   BridgeClient,
@@ -65,8 +73,36 @@ export default function App() {
   const [model, setModel] = useState("gemma4:26b");
   const requests = useRef(new Map<string, RequestHandle>());
   const scroll = useRef<ScrollView>(null);
+  const followOutput = useRef(true);
   const skipNextLoad = useRef<string | undefined>(undefined);
   const busy = activeId ? busyChats.has(activeId) : false;
+  const historySwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponderCapture: (_, gesture) =>
+          compact &&
+          !drawer &&
+          shouldClaimHistorySwipe({
+            startX: gesture.x0,
+            dx: gesture.dx,
+            dy: gesture.dy,
+          }),
+        onPanResponderRelease: (_, gesture) => {
+          if (
+            compact &&
+            !drawer &&
+            shouldOpenHistoryDrawer({
+              startX: gesture.x0,
+              dx: gesture.dx,
+              dy: gesture.dy,
+            })
+          )
+            setDrawer(true);
+        },
+        onPanResponderTerminationRequest: () => true,
+      }),
+    [compact, drawer],
+  );
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -133,11 +169,13 @@ export default function App() {
     };
   }, [activeId]);
   useEffect(() => {
-    if (busy) scroll.current?.scrollToEnd({ animated: true });
+    if (busy && followOutput.current)
+      scroll.current?.scrollToEnd({ animated: true });
   }, [messages, busy]);
 
   useEffect(() => {
     const subscription = Keyboard.addListener("keyboardDidShow", () => {
+      followOutput.current = true;
       scroll.current?.scrollToEnd({ animated: true });
     });
     return () => subscription.remove();
@@ -154,6 +192,7 @@ export default function App() {
 
   function selectChat(chatId: string, fresh = false) {
     activeIdRef.current = chatId;
+    followOutput.current = true;
     setError(undefined);
     setMessages([]);
     if (fresh) skipNextLoad.current = chatId;
@@ -229,6 +268,7 @@ export default function App() {
         status: "complete",
         created_at: new Date().toISOString(),
       };
+      followOutput.current = true;
       setPrompt("");
       setError(undefined);
       setChatBusy(chatId, true);
@@ -309,6 +349,7 @@ export default function App() {
       .reverse()
       .find((message) => message.role === "user");
     if (!user) return;
+    followOutput.current = true;
     setError(undefined);
     setChatBusy(activeId, true);
     const handle = client.retryMessage(
@@ -335,6 +376,15 @@ export default function App() {
     } finally {
       setSettingsBusy(false);
     }
+  }
+
+  function trackScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    followOutput.current = isNearBottom({
+      contentHeight: contentSize.height,
+      viewportHeight: layoutMeasurement.height,
+      offsetY: contentOffset.y,
+    });
   }
 
   return (
@@ -434,6 +484,7 @@ export default function App() {
       </Animated.View>
       <KeyboardAvoidingView
         style={styles.main}
+        {...(compact ? historySwipe.panHandlers : {})}
         behavior={
           Platform.OS === "ios"
             ? "padding"
@@ -467,6 +518,8 @@ export default function App() {
           keyboardDismissMode={
             Platform.OS === "ios" ? "interactive" : "on-drag"
           }
+          onScroll={trackScroll}
+          scrollEventThrottle={16}
         >
           {loading ? (
             <ActivityIndicator color={colors.text} />
@@ -511,11 +564,12 @@ export default function App() {
               placeholder={`Message ${formatModelName(model)}…`}
               placeholderTextColor={colors.muted}
               style={styles.input}
-              onFocus={() =>
+              onFocus={() => {
+                followOutput.current = true;
                 requestAnimationFrame(() =>
                   scroll.current?.scrollToEnd({ animated: true }),
-                )
-              }
+                );
+              }}
               onKeyPress={(event) => {
                 if (
                   Platform.OS === "web" &&
@@ -538,9 +592,6 @@ export default function App() {
               <Text style={styles.sendText}>{busy ? "■" : "↑"}</Text>
             </Pressable>
           </View>
-          <Text style={styles.disclaimer}>
-            AI models can make mistakes. Your conversations stay on your Mac.
-          </Text>
         </View>
       </KeyboardAvoidingView>
       {settings && (
@@ -654,11 +705,7 @@ function MessageView({
             {message.content}
           </Text>
         ) : (
-          <MarkdownText
-            content={message.content || "▍"}
-            textStyle={styles.messageText}
-            codeStyle={{ backgroundColor: colors.code, color: colors.codeText }}
-          />
+          <MarkdownText content={message.content || "▍"} colors={colors} />
         )}
         {message.status === "failed" && (
           <Text style={styles.failed}>Generation interrupted</Text>

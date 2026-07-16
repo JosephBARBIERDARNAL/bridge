@@ -1,5 +1,13 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
+
+const markdownWebEntry = fileURLToPath(
+  new URL(
+    "./node_modules/react-native-enriched-markdown/lib/module/index.web.js",
+    import.meta.url,
+  ),
+);
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "BRIDGE_");
@@ -8,7 +16,13 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: { global: "globalThis" },
     resolve: {
-      alias: [{ find: /^react-native$/, replacement: "react-native-web" }],
+      alias: [
+        {
+          find: /^react-native-enriched-markdown$/,
+          replacement: markdownWebEntry,
+        },
+        { find: /^react-native$/, replacement: "react-native-web" },
+      ],
       extensions: [".web.tsx", ".web.ts", ".tsx", ".ts", ".jsx", ".js"],
     },
     server: {
