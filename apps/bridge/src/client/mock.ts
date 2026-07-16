@@ -1,7 +1,6 @@
 import type {
   BridgeClient,
   ChatDetail,
-  ChatSummary,
   Message,
   RequestHandle,
   StreamListener,

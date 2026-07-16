@@ -1,7 +1,8 @@
 export const AUTO_FOLLOW_THRESHOLD = 72;
-export const HISTORY_EDGE_WIDTH = 18;
+export const AUTO_FOLLOW_RESUME_THRESHOLD = 4;
+export const HISTORY_EDGE_WIDTH = 32;
 export const HISTORY_SWIPE_CLAIM_DISTANCE = 12;
-export const HISTORY_SWIPE_OPEN_DISTANCE = 64;
+export const HISTORY_SWIPE_OPEN_DISTANCE = 48;
 
 type ScrollMetrics = {
   contentHeight: number;
@@ -24,10 +25,20 @@ export function isNearBottom(
   return distance <= threshold;
 }
 
+export function shouldPauseAutoFollow(
+  previousOffsetY: number,
+  offsetY: number,
+) {
+  return offsetY < previousOffsetY - 0.5;
+}
+
+export function isHistorySwipeStart(startX: number) {
+  return startX >= 0 && startX <= HISTORY_EDGE_WIDTH;
+}
+
 export function shouldClaimHistorySwipe({ startX, dx, dy }: SwipeMetrics) {
   return (
-    startX >= 0 &&
-    startX <= HISTORY_EDGE_WIDTH &&
+    isHistorySwipeStart(startX) &&
     dx >= HISTORY_SWIPE_CLAIM_DISTANCE &&
     dx > Math.abs(dy) * 1.5
   );

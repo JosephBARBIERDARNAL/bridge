@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,13 +23,14 @@ import {
 } from "react-native";
 import MarkdownText from "./MarkdownText";
 import {
+  AUTO_FOLLOW_RESUME_THRESHOLD,
+  isHistorySwipeStart,
   isNearBottom,
-  shouldClaimHistorySwipe,
   shouldOpenHistoryDrawer,
+  shouldPauseAutoFollow,
 } from "./chatUi";
 import { createClient } from "./client";
 import type {
-  BridgeClient,
   ChatSummary,
   Message,
   RequestHandle,
@@ -38,12 +39,10 @@ import type {
 import { dark, light } from "./theme";
 
 const client = createClient();
-const empty =
-  "Start a conversation with your local model. Your messages stay on your Mac.";
 
 export default function App() {
-  const systemDark = Appearance.getColorScheme() === "dark";
-  const [darkMode, setDarkMode] = useState(systemDark);
+  const systemLight = Appearance.getColorScheme() === "light";
+  const [darkMode, setDarkMode] = useState(systemLight);
   const colors = darkMode ? dark : light;
   const topInset =
     Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 32) : 0;
@@ -74,19 +73,14 @@ export default function App() {
   const requests = useRef(new Map<string, RequestHandle>());
   const scroll = useRef<ScrollView>(null);
   const followOutput = useRef(true);
+  const previousScrollY = useRef(0);
   const skipNextLoad = useRef<string | undefined>(undefined);
   const busy = activeId ? busyChats.has(activeId) : false;
   const historySwipe = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponderCapture: (_, gesture) =>
-          compact &&
-          !drawer &&
-          shouldClaimHistorySwipe({
-            startX: gesture.x0,
-            dx: gesture.dx,
-            dy: gesture.dy,
-          }),
+        onStartShouldSetPanResponderCapture: (event) =>
+          compact && !drawer && isHistorySwipeStart(event.nativeEvent.pageX),
         onPanResponderRelease: (_, gesture) => {
           if (
             compact &&
@@ -193,6 +187,7 @@ export default function App() {
   function selectChat(chatId: string, fresh = false) {
     activeIdRef.current = chatId;
     followOutput.current = true;
+    previousScrollY.current = 0;
     setError(undefined);
     setMessages([]);
     if (fresh) skipNextLoad.current = chatId;
@@ -380,11 +375,16 @@ export default function App() {
 
   function trackScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    followOutput.current = isNearBottom({
+    const metrics = {
       contentHeight: contentSize.height,
       viewportHeight: layoutMeasurement.height,
       offsetY: contentOffset.y,
-    });
+    };
+    if (shouldPauseAutoFollow(previousScrollY.current, contentOffset.y))
+      followOutput.current = false;
+    else if (isNearBottom(metrics, AUTO_FOLLOW_RESUME_THRESHOLD))
+      followOutput.current = true;
+    previousScrollY.current = contentOffset.y;
   }
 
   return (
@@ -473,13 +473,9 @@ export default function App() {
             onPress={() => setDarkMode((value) => !value)}
           >
             <Text style={styles.secondaryText}>
-              {darkMode ? "☀  Light mode" : "☾  Dark mode"}
+              {darkMode ? "☀  Switch to light mode" : "☾  Switch to dark mode"}
             </Text>
           </Pressable>
-          <View style={styles.privateRow}>
-            <Text style={styles.privateDot}>●</Text>
-            <Text style={styles.secondaryText}>Private · Mac hosted</Text>
-          </View>
         </View>
       </Animated.View>
       <KeyboardAvoidingView
@@ -504,10 +500,6 @@ export default function App() {
             <Text style={styles.headerTitle}>
               {chats.find((chat) => chat.id === activeId)?.title ?? "New chat"}
             </Text>
-            <Text style={styles.model}>{formatModelName(model)}</Text>
-          </View>
-          <View style={styles.online}>
-            <Text style={styles.onlineText}>● Local</Text>
           </View>
         </View>
         <ScrollView
@@ -529,7 +521,6 @@ export default function App() {
                 <Text style={styles.heroText}>B</Text>
               </View>
               <Text style={styles.emptyTitle}>How can I help?</Text>
-              <Text style={styles.emptyBody}>{empty}</Text>
             </View>
           ) : (
             messages.map((message) => (
