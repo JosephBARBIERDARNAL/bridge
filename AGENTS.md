@@ -23,6 +23,8 @@ Use the root `justfile` as the main command interface:
 - `just fmt` formats Rust, TypeScript, JavaScript, JSON, and Markdown.
 - `just android-build` assembles a debug APK without installing it.
 
+Always check for lint, format and test issues before submitting your changes.
+
 ## Coding Style & Naming Conventions
 
 Rust uses edition 2024 and standard `rustfmt`; use `snake_case` for modules/functions and `PascalCase` for types. TypeScript is strict and formatted with Prettier using two-space indentation. Name React components in `PascalCase`, functions and variables in `camelCase`, and platform variants with suffixes such as `index.web.ts`. Run `just fmt` before submitting changes.

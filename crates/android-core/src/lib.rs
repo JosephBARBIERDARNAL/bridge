@@ -24,10 +24,38 @@ pub struct Message {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ChatDetail {
     pub chat: ChatSummary,
     pub messages: Vec<Message>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ChatDetailResponse {
+    Nested {
+        chat: ChatSummary,
+        messages: Vec<Message>,
+    },
+    Flat {
+        #[serde(flatten)]
+        chat: ChatSummary,
+        messages: Vec<Message>,
+    },
+}
+
+impl<'de> Deserialize<'de> for ChatDetail {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let response = ChatDetailResponse::deserialize(deserializer)?;
+        let (chat, messages) = match response {
+            ChatDetailResponse::Nested { chat, messages }
+            | ChatDetailResponse::Flat { chat, messages } => (chat, messages),
+        };
+        Ok(Self { chat, messages })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -404,6 +432,15 @@ uniffi::include_scaffolding!("bridge_core");
 mod tests {
     use super::*;
 
+    const CHAT: &str = r#"
+        {
+            "id": "chat-1",
+            "title": "History",
+            "created_at": "2026-07-16T08:00:00Z",
+            "updated_at": "2026-07-16T08:01:00Z"
+        }
+    "#;
+
     #[test]
     fn requires_https_away_from_loopback() {
         assert!(matches!(
@@ -411,5 +448,41 @@ mod tests {
             Err(BridgeError::InvalidConfiguration)
         ));
         assert!(BridgeClient::new("http://127.0.0.1:8787".into(), "x".repeat(32)).is_ok());
+    }
+
+    #[test]
+    fn accepts_nested_chat_details() {
+        let detail: ChatDetail =
+            serde_json::from_str(&format!(r#"{{"chat":{CHAT},"messages":[]}}"#)).unwrap();
+
+        assert_eq!(detail.chat.id, "chat-1");
+        assert!(detail.messages.is_empty());
+    }
+
+    #[test]
+    fn accepts_flat_chat_details_from_older_gateways() {
+        let detail: ChatDetail = serde_json::from_str(
+            r#"
+            {
+                "id": "chat-1",
+                "title": "History",
+                "created_at": "2026-07-16T08:00:00Z",
+                "updated_at": "2026-07-16T08:01:00Z",
+                "messages": [{
+                    "id": "message-1",
+                    "chat_id": "chat-1",
+                    "role": "user",
+                    "content": "Hello",
+                    "status": "complete",
+                    "created_at": "2026-07-16T08:01:00Z"
+                }]
+            }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(detail.chat.id, "chat-1");
+        assert_eq!(detail.messages.len(), 1);
+        assert_eq!(detail.messages[0].content, "Hello");
     }
 }
