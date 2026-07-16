@@ -5,11 +5,11 @@ import {
   Animated,
   Appearance,
   Easing,
+  type GestureResponderEvent,
   Keyboard,
   KeyboardAvoidingView,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  PanResponder,
   Platform,
   Pressable,
   SafeAreaView,
@@ -24,7 +24,6 @@ import {
 import MarkdownText from "./MarkdownText";
 import {
   AUTO_FOLLOW_RESUME_THRESHOLD,
-  isHistorySwipeStart,
   isNearBottom,
   shouldOpenHistoryDrawer,
   shouldPauseAutoFollow,
@@ -74,29 +73,9 @@ export default function App() {
   const scroll = useRef<ScrollView>(null);
   const followOutput = useRef(true);
   const previousScrollY = useRef(0);
+  const historyTouch = useRef<{ x: number; y: number } | null>(null);
   const skipNextLoad = useRef<string | undefined>(undefined);
   const busy = activeId ? busyChats.has(activeId) : false;
-  const historySwipe = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponderCapture: (event) =>
-          compact && !drawer && isHistorySwipeStart(event.nativeEvent.pageX),
-        onPanResponderRelease: (_, gesture) => {
-          if (
-            compact &&
-            !drawer &&
-            shouldOpenHistoryDrawer({
-              startX: gesture.x0,
-              dx: gesture.dx,
-              dy: gesture.dy,
-            })
-          )
-            setDrawer(true);
-        },
-        onPanResponderTerminationRequest: () => true,
-      }),
-    [compact, drawer],
-  );
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -387,6 +366,25 @@ export default function App() {
     previousScrollY.current = contentOffset.y;
   }
 
+  function startHistorySwipe(event: GestureResponderEvent) {
+    if (!compact || drawer) return;
+    historyTouch.current = {
+      x: event.nativeEvent.pageX,
+      y: event.nativeEvent.pageY,
+    };
+  }
+
+  function trackHistorySwipe(event: GestureResponderEvent) {
+    const start = historyTouch.current;
+    if (!start || !compact || drawer) return;
+    const dx = event.nativeEvent.pageX - start.x;
+    const dy = event.nativeEvent.pageY - start.y;
+    if (shouldOpenHistoryDrawer({ startX: start.x, dx, dy }, width)) {
+      historyTouch.current = null;
+      setDrawer(true);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.app}>
       {compact && (
@@ -480,7 +478,6 @@ export default function App() {
       </Animated.View>
       <KeyboardAvoidingView
         style={styles.main}
-        {...(compact ? historySwipe.panHandlers : {})}
         behavior={
           Platform.OS === "ios"
             ? "padding"
@@ -511,6 +508,14 @@ export default function App() {
             Platform.OS === "ios" ? "interactive" : "on-drag"
           }
           onScroll={trackScroll}
+          onTouchStart={startHistorySwipe}
+          onTouchMove={trackHistorySwipe}
+          onTouchEnd={() => {
+            historyTouch.current = null;
+          }}
+          onTouchCancel={() => {
+            historyTouch.current = null;
+          }}
           scrollEventThrottle={16}
         >
           {loading ? (
@@ -792,15 +797,8 @@ function makeStyles(c: typeof light, topInset: number) {
     smallIcon: { color: c.muted, padding: 5 },
     danger: { color: c.danger },
     themeButton: { padding: 12, borderTopWidth: 1, borderTopColor: c.border },
-    privateRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      padding: 12,
-    },
-    privateDot: { color: "#46a758", fontSize: 10 },
     secondaryText: { color: c.muted, fontSize: 13 },
-    main: { flex: 1 },
+    main: { flex: 1, minWidth: 0, overflow: "hidden" },
     header: {
       height: 68,
       backgroundColor: c.surface,
@@ -812,16 +810,7 @@ function makeStyles(c: typeof light, topInset: number) {
       gap: 12,
     },
     headerTitle: { color: c.text, fontWeight: "600", fontSize: 15 },
-    model: { color: c.muted, fontSize: 11, marginTop: 2 },
-    online: {
-      marginLeft: "auto",
-      backgroundColor: c.background,
-      borderRadius: 20,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-    },
-    onlineText: { color: "#398649", fontSize: 12, fontWeight: "600" },
-    messages: { flex: 1 },
+    messages: { flex: 1, minWidth: 0 },
     messageContent: {
       width: "100%",
       maxWidth: 820,
@@ -849,12 +838,6 @@ function makeStyles(c: typeof light, topInset: number) {
       fontSize: 27,
       fontWeight: "700",
       marginTop: 20,
-    },
-    emptyBody: {
-      color: c.muted,
-      textAlign: "center",
-      lineHeight: 22,
-      marginTop: 10,
     },
     messageRow: {
       flexDirection: "row",
@@ -894,6 +877,8 @@ function makeStyles(c: typeof light, topInset: number) {
     errorText: { color: c.text, marginTop: 4 },
     retry: { color: c.text, fontWeight: "700", marginTop: 10 },
     composerWrap: {
+      width: "100%",
+      minWidth: 0,
       paddingHorizontal: 18,
       paddingBottom: 12,
       paddingTop: 7,
@@ -901,6 +886,7 @@ function makeStyles(c: typeof light, topInset: number) {
     },
     composer: {
       width: "100%",
+      minWidth: 0,
       maxWidth: 820,
       alignSelf: "center",
       flexDirection: "row",
@@ -917,6 +903,8 @@ function makeStyles(c: typeof light, topInset: number) {
     input: {
       color: c.text,
       flex: 1,
+      flexShrink: 1,
+      minWidth: 0,
       minHeight: 38,
       maxHeight: 150,
       paddingHorizontal: 10,
@@ -934,12 +922,6 @@ function makeStyles(c: typeof light, topInset: number) {
     },
     sendDisabled: { opacity: 0.35 },
     sendText: { color: c.accentText, fontSize: 18, fontWeight: "800" },
-    disclaimer: {
-      color: c.muted,
-      fontSize: 10.5,
-      textAlign: "center",
-      marginTop: 7,
-    },
     modalBackdrop: {
       position: "absolute",
       inset: 0,

@@ -1,6 +1,6 @@
 export const AUTO_FOLLOW_THRESHOLD = 72;
 export const AUTO_FOLLOW_RESUME_THRESHOLD = 4;
-export const HISTORY_EDGE_WIDTH = 32;
+export const HISTORY_SWIPE_START_RATIO = 0.65;
 export const HISTORY_SWIPE_CLAIM_DISTANCE = 12;
 export const HISTORY_SWIPE_OPEN_DISTANCE = 48;
 
@@ -32,21 +32,31 @@ export function shouldPauseAutoFollow(
   return offsetY < previousOffsetY - 0.5;
 }
 
-export function isHistorySwipeStart(startX: number) {
-  return startX >= 0 && startX <= HISTORY_EDGE_WIDTH;
+export function isHistorySwipeStart(startX: number, viewportWidth: number) {
+  return (
+    startX >= 0 &&
+    viewportWidth > 0 &&
+    startX <= viewportWidth * HISTORY_SWIPE_START_RATIO
+  );
 }
 
-export function shouldClaimHistorySwipe({ startX, dx, dy }: SwipeMetrics) {
+export function shouldClaimHistorySwipe(
+  { startX, dx, dy }: SwipeMetrics,
+  viewportWidth: number,
+) {
   return (
-    isHistorySwipeStart(startX) &&
+    isHistorySwipeStart(startX, viewportWidth) &&
     dx >= HISTORY_SWIPE_CLAIM_DISTANCE &&
     dx > Math.abs(dy) * 1.5
   );
 }
 
-export function shouldOpenHistoryDrawer(metrics: SwipeMetrics) {
+export function shouldOpenHistoryDrawer(
+  metrics: SwipeMetrics,
+  viewportWidth: number,
+) {
   return (
-    shouldClaimHistorySwipe(metrics) &&
+    shouldClaimHistorySwipe(metrics, viewportWidth) &&
     metrics.dx >= HISTORY_SWIPE_OPEN_DISTANCE
   );
 }

@@ -37,22 +37,34 @@ describe("chat auto-follow", () => {
 });
 
 describe("history swipe", () => {
-  test("recognizes the wider left-edge touch target", () => {
-    expect(isHistorySwipeStart(0)).toBe(true);
-    expect(isHistorySwipeStart(30)).toBe(true);
-    expect(isHistorySwipeStart(40)).toBe(false);
+  test("allows a swipe to begin around the middle of the viewport", () => {
+    expect(isHistorySwipeStart(0, 400)).toBe(true);
+    expect(isHistorySwipeStart(200, 400)).toBe(true);
+    expect(isHistorySwipeStart(280, 400)).toBe(false);
   });
 
-  test("claims a horizontal rightward gesture from the left edge", () => {
-    expect(shouldClaimHistorySwipe({ startX: 12, dx: 20, dy: 4 })).toBe(true);
-    expect(shouldOpenHistoryDrawer({ startX: 12, dx: 50, dy: 8 })).toBe(true);
+  test("claims a horizontal rightward gesture from the left or middle", () => {
+    expect(shouldClaimHistorySwipe({ startX: 200, dx: 20, dy: 4 }, 400)).toBe(
+      true,
+    );
+    expect(shouldOpenHistoryDrawer({ startX: 200, dx: 50, dy: 8 }, 400)).toBe(
+      true,
+    );
   });
 
   test("rejects gestures that would conflict with ordinary scrolling", () => {
-    expect(shouldClaimHistorySwipe({ startX: 40, dx: 70, dy: 2 })).toBe(false);
-    expect(shouldClaimHistorySwipe({ startX: 12, dx: -70, dy: 2 })).toBe(false);
-    expect(shouldClaimHistorySwipe({ startX: 12, dx: 20, dy: 18 })).toBe(false);
-    expect(shouldOpenHistoryDrawer({ startX: 12, dx: 40, dy: 2 })).toBe(false);
+    expect(shouldClaimHistorySwipe({ startX: 280, dx: 70, dy: 2 }, 400)).toBe(
+      false,
+    );
+    expect(shouldClaimHistorySwipe({ startX: 200, dx: -70, dy: 2 }, 400)).toBe(
+      false,
+    );
+    expect(shouldClaimHistorySwipe({ startX: 200, dx: 20, dy: 18 }, 400)).toBe(
+      false,
+    );
+    expect(shouldOpenHistoryDrawer({ startX: 200, dx: 40, dy: 2 }, 400)).toBe(
+      false,
+    );
   });
 });
 

@@ -28,5 +28,3 @@ The phone is a thin client: the React Native UI talks to a Rust networking core 
 The app works exactly when it can reach your Mac: on the same network, or from anywhere in the world through your private Tailscale network, as long as the Mac is awake and running. When the Mac is unreachable, you can't chat or browse past conversations until the connection is back.
 
 Because access is just "be on the tailnet and hold the API token", you aren't limited to one phone — any Android device you sign into your Tailscale network can use the same gateway and see the same chat history.
-
-
