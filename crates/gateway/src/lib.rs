@@ -1,6 +1,7 @@
 mod config;
 mod error;
 mod model;
+mod tools;
 
 use std::{
     collections::HashSet,
@@ -99,6 +100,7 @@ impl AppState {
             ollama_port: 9,
             model: "gemma4:26b".into(),
             token: token.into(),
+            tools: config::ToolConfig::default(),
         };
         Self::connect(&config).await
     }

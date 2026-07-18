@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, path::PathBuf};
+use std::{env, net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result, bail};
 
@@ -10,6 +10,56 @@ pub struct Config {
     pub ollama_port: u16,
     pub model: String,
     pub token: String,
+    pub tools: ToolConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolConfig {
+    pub timeout: Duration,
+    pub fetch_max_bytes: usize,
+    pub page_max_chars: usize,
+    pub max_rounds: u32,
+    pub search_max_results: usize,
+}
+
+impl Default for ToolConfig {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(15),
+            fetch_max_bytes: 1_000_000,
+            page_max_chars: 6_000,
+            max_rounds: 8,
+            search_max_results: 5,
+        }
+    }
+}
+
+impl ToolConfig {
+    fn from_env() -> Result<Self> {
+        let default = Self::default();
+        Ok(Self {
+            timeout: Duration::from_secs(env_parse(
+                "BRIDGE_TOOL_TIMEOUT_SECS",
+                default.timeout.as_secs(),
+            )?),
+            fetch_max_bytes: env_parse("BRIDGE_TOOL_FETCH_MAX_BYTES", default.fetch_max_bytes)?,
+            page_max_chars: env_parse("BRIDGE_TOOL_PAGE_MAX_CHARS", default.page_max_chars)?,
+            max_rounds: env_parse("BRIDGE_TOOL_MAX_ROUNDS", default.max_rounds)?,
+            search_max_results: env_parse(
+                "BRIDGE_SEARCH_MAX_RESULTS",
+                default.search_max_results,
+            )?,
+        })
+    }
+}
+
+fn env_parse<T: FromStr>(name: &str, default: T) -> Result<T> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("{name} must be a number, got '{value}'")),
+        Err(_) => Ok(default),
+    }
 }
 
 impl Config {
@@ -49,6 +99,7 @@ impl Config {
                 .context("BRIDGE_OLLAMA_PORT must be a port number")?,
             model: env::var("BRIDGE_MODEL").unwrap_or_else(|_| "gemma4:26b".into()),
             token,
+            tools: ToolConfig::from_env()?,
         })
     }
 }
