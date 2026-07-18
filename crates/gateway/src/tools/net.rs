@@ -22,6 +22,7 @@ pub struct SafeFetcher {
     max_bytes: usize,
 }
 
+#[derive(Debug)]
 pub struct FetchedBody {
     pub final_url: Url,
     pub content_type: String,
@@ -243,6 +244,25 @@ mod tests {
         assert!(validate_url("https://user@example.com").is_err());
         assert!(validate_url("not a url").is_err());
         assert!(validate_url("data:text/html,hello").is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_forbidden_hosts_before_connecting() {
+        let fetcher = SafeFetcher::new(Duration::from_secs(2), 1024);
+        for url in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1:8787/v1/health",
+            "http://100.100.1.1/",
+            "http://[::1]/",
+            "file:///etc/passwd",
+        ] {
+            let error = fetcher.fetch(url).await.unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains("private network") || message.contains("allowed"),
+                "{url} should be blocked, got: {message}"
+            );
+        }
     }
 
     #[test]
