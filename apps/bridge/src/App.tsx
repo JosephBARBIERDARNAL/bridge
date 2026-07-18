@@ -63,9 +63,7 @@ export default function App() {
   const activeIdRef = useRef<string | undefined>(undefined);
   const [messages, setMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [searchByChat, setSearchByChat] = useState<Record<string, boolean>>(
-    {},
-  );
+  const [searchByChat, setSearchByChat] = useState<Record<string, boolean>>({});
   const [busyChats, setBusyChats] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<StreamFailure>();
   const [loading, setLoading] = useState(true);
