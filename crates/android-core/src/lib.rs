@@ -20,6 +20,8 @@ pub struct Message {
     pub chat_id: String,
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub thinking: String,
     pub status: String,
     pub created_at: String,
 }
@@ -76,6 +78,7 @@ pub struct StreamFailure {
 
 pub trait MessageStreamListener: Send + Sync {
     fn on_started(&self, user_message_id: String, assistant_message_id: String);
+    fn on_thinking_delta(&self, assistant_message_id: String, text: String);
     fn on_delta(&self, assistant_message_id: String, text: String);
     fn on_completed(&self, message: Message);
     fn on_error(&self, error: StreamFailure);
@@ -380,6 +383,11 @@ fn dispatch_sse(frame: &str, listener: &dyn MessageStreamListener) -> Result<(),
                 serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
             listener.on_delta(value.message_id, value.text);
         }
+        "thinking_delta" => {
+            let value: DeltaEvent =
+                serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
+            listener.on_thinking_delta(value.message_id, value.text);
+        }
         "message_completed" => {
             let value: Message =
                 serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
@@ -431,6 +439,28 @@ uniffi::include_scaffolding!("bridge_core");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingListener {
+        thinking: Mutex<Vec<(String, String)>>,
+    }
+
+    impl MessageStreamListener for RecordingListener {
+        fn on_started(&self, _user_message_id: String, _assistant_message_id: String) {}
+
+        fn on_thinking_delta(&self, assistant_message_id: String, text: String) {
+            self.thinking
+                .lock()
+                .unwrap()
+                .push((assistant_message_id, text));
+        }
+
+        fn on_delta(&self, _assistant_message_id: String, _text: String) {}
+
+        fn on_completed(&self, _message: Message) {}
+
+        fn on_error(&self, _error: StreamFailure) {}
+    }
 
     const CHAT: &str = r#"
         {
@@ -484,5 +514,21 @@ mod tests {
         assert_eq!(detail.chat.id, "chat-1");
         assert_eq!(detail.messages.len(), 1);
         assert_eq!(detail.messages[0].content, "Hello");
+        assert!(detail.messages[0].thinking.is_empty());
+    }
+
+    #[test]
+    fn dispatches_thinking_deltas() {
+        let listener = RecordingListener::default();
+        dispatch_sse(
+            "event: thinking_delta\ndata: {\"message_id\":\"assistant-1\",\"text\":\"Considering\"}",
+            &listener,
+        )
+        .unwrap();
+
+        assert_eq!(
+            *listener.thinking.lock().unwrap(),
+            vec![("assistant-1".into(), "Considering".into())]
+        );
     }
 }

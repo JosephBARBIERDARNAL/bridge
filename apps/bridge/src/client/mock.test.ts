@@ -14,9 +14,13 @@ describe("MockBridgeClient", () => {
   test("streams a response", async () => {
     const client = new MockBridgeClient();
     const chat = await client.createChat();
+    let thinking = "";
     const completed = new Promise<string>((resolve) =>
       client.sendMessage(chat.id, "Hello", {
         onStarted() {},
+        onThinkingDelta(_messageId, text) {
+          thinking += text;
+        },
         onDelta() {},
         onError(error) {
           throw new Error(error.message);
@@ -27,6 +31,10 @@ describe("MockBridgeClient", () => {
       }),
     );
     expect(await completed).toContain("local preview response");
+    expect(thinking).toContain("Preparing");
+    expect((await client.getChat(chat.id)).messages.at(-1)?.thinking).toBe(
+      thinking,
+    );
   });
 
   test("keeps chat histories isolated", async () => {
@@ -36,6 +44,7 @@ describe("MockBridgeClient", () => {
     const completed = new Promise<void>((resolve, reject) =>
       client.sendMessage(first.id, "Only in the first chat", {
         onStarted() {},
+        onThinkingDelta() {},
         onDelta() {},
         onError(error) {
           reject(new Error(error.message));

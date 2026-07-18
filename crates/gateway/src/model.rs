@@ -15,6 +15,7 @@ pub struct Message {
     pub chat_id: String,
     pub role: String,
     pub content: String,
+    pub thinking: String,
     pub status: String,
     pub created_at: String,
 }

@@ -6,6 +6,7 @@ import {
   shouldClaimHistorySwipe,
   shouldOpenHistoryDrawer,
   shouldPauseAutoFollow,
+  shouldShowResponseWaiting,
 } from "./chatUi";
 
 describe("chat auto-follow", () => {
@@ -65,6 +66,42 @@ describe("history swipe", () => {
     expect(shouldOpenHistoryDrawer({ startX: 200, dx: 40, dy: 2 }, 400)).toBe(
       false,
     );
+  });
+});
+
+describe("response waiting", () => {
+  const user = {
+    role: "user" as const,
+    content: "Hello",
+    thinking: "",
+    status: "complete" as const,
+  };
+  const assistant = {
+    role: "assistant" as const,
+    content: "",
+    thinking: "",
+    status: "streaming" as const,
+  };
+
+  test("shows before the response starts and while its first token is pending", () => {
+    expect(shouldShowResponseWaiting(true, [user])).toBe(true);
+    expect(shouldShowResponseWaiting(true, [user, assistant])).toBe(true);
+  });
+
+  test("hides once reasoning or answer content arrives", () => {
+    expect(
+      shouldShowResponseWaiting(true, [
+        user,
+        { ...assistant, thinking: "Considering the request" },
+      ]),
+    ).toBe(false);
+    expect(
+      shouldShowResponseWaiting(true, [
+        user,
+        { ...assistant, content: "Hello" },
+      ]),
+    ).toBe(false);
+    expect(shouldShowResponseWaiting(false, [user])).toBe(false);
   });
 });
 

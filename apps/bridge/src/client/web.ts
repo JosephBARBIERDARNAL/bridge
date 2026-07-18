@@ -96,6 +96,8 @@ export class WebGatewayClient implements BridgeClient {
     const value = JSON.parse(data);
     if (event === "message_started")
       listener.onStarted(value.user_message_id, value.assistant_message_id);
+    if (event === "thinking_delta")
+      listener.onThinkingDelta(value.message_id, value.text);
     if (event === "delta") listener.onDelta(value.message_id, value.text);
     if (event === "message_completed") listener.onCompleted(value as Message);
     if (event === "error") listener.onError(value);

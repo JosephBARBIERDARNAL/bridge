@@ -72,6 +72,7 @@ class BridgeCoreModule(private val context: ReactApplicationContext) : ReactCont
             val requestId = UUID.randomUUID().toString()
             val listener = object : MessageStreamListener {
                 override fun onStarted(userMessageId: String, assistantMessageId: String) = emit(requestId, "started", Arguments.createMap().apply { putString("userMessageId", userMessageId); putString("assistantMessageId", assistantMessageId) })
+                override fun onThinkingDelta(assistantMessageId: String, text: String) = emit(requestId, "thinking_delta", Arguments.createMap().apply { putString("assistantMessageId", assistantMessageId); putString("text", text) })
                 override fun onDelta(assistantMessageId: String, text: String) = emit(requestId, "delta", Arguments.createMap().apply { putString("assistantMessageId", assistantMessageId); putString("text", text) })
                 override fun onCompleted(message: Message) { emit(requestId, "completed", Arguments.createMap().apply { putMap("message", messageMap(message)) }); requests.remove(requestId)?.close() }
                 override fun onError(error: StreamFailure) { emit(requestId, "error", Arguments.createMap().apply { putMap("error", errorMap(error)) }); requests.remove(requestId)?.close() }
@@ -94,7 +95,7 @@ class BridgeCoreModule(private val context: ReactApplicationContext) : ReactCont
     }
 
     private fun chatMap(value: ChatSummary) = Arguments.createMap().apply { putString("id", value.id); putString("title", value.title); putString("created_at", value.createdAt); putString("updated_at", value.updatedAt) }
-    private fun messageMap(value: Message) = Arguments.createMap().apply { putString("id", value.id); putString("chat_id", value.chatId); putString("role", value.role); putString("content", value.content); putString("status", value.status); putString("created_at", value.createdAt) }
+    private fun messageMap(value: Message) = Arguments.createMap().apply { putString("id", value.id); putString("chat_id", value.chatId); putString("role", value.role); putString("content", value.content); putString("thinking", value.thinking); putString("status", value.status); putString("created_at", value.createdAt) }
     private fun detailMap(value: ChatDetail) = Arguments.createMap().apply { putMap("chat", chatMap(value.chat)); putArray("messages", Arguments.createArray().apply { value.messages.forEach { pushMap(messageMap(it)) } }) }
     private fun healthMap(value: HealthStatus) = Arguments.createMap().apply { putString("gateway", value.gateway); putString("database", value.database); putString("ollama", value.ollama); putString("model", value.model); putBoolean("model_available", value.modelAvailable) }
     private fun errorMap(value: StreamFailure) = Arguments.createMap().apply { putString("code", value.code); putString("message", value.message); putBoolean("retryable", value.retryable) }

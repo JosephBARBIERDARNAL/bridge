@@ -28,6 +28,7 @@ const chats = new Map<string, ChatDetail>([
           role: "assistant",
           status: "complete",
           created_at: now(),
+          thinking: "",
           content:
             "Your private local assistant is ready.\n\nThis browser preview is using mock data.",
         },
@@ -91,6 +92,7 @@ export class MockBridgeClient implements BridgeClient {
       chat_id: chatId,
       role: "user",
       content,
+      thinking: "",
       status: "complete",
       created_at: now(),
     };
@@ -124,13 +126,21 @@ export class MockBridgeClient implements BridgeClient {
       chat_id: detail.chat.id,
       role: "assistant",
       content: "",
+      thinking: "",
       status: "streaming",
       created_at: now(),
     };
     detail.messages.push(assistant);
     listener.onStarted(user.id, assistant.id);
+    const reasoning = "Preparing a concise local preview response.";
     const response = `This is a local preview response to “${user.content}”. In real mode, these tokens stream securely from the model running on your Mac.`;
     void (async () => {
+      for (const token of reasoning.split(/(?<=\s)/)) {
+        await delay(35);
+        if (cancelled) return;
+        assistant.thinking += token;
+        listener.onThinkingDelta(assistant.id, token);
+      }
       for (const token of response.split(/(?<=\s)/)) {
         await delay(35);
         if (cancelled) return;

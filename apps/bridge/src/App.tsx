@@ -27,6 +27,7 @@ import {
   isNearBottom,
   shouldOpenHistoryDrawer,
   shouldPauseAutoFollow,
+  shouldShowResponseWaiting,
 } from "./chatUi";
 import { createClient } from "./client";
 import type {
@@ -76,6 +77,7 @@ export default function App() {
   const historyTouch = useRef<{ x: number; y: number } | null>(null);
   const skipNextLoad = useRef<string | undefined>(undefined);
   const busy = activeId ? busyChats.has(activeId) : false;
+  const showResponseWaiting = shouldShowResponseWaiting(busy, messages);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -90,16 +92,14 @@ export default function App() {
     }).start();
   }, [drawer, drawerProgress]);
 
-  const refreshChats = async (selectFirst = false) => {
+  const refreshChats = async () => {
     const values = await client.listChats();
     setChats(values);
-    if (selectFirst && !activeIdRef.current && values[0])
-      selectChat(values[0].id);
   };
 
   useEffect(() => {
     void Promise.all([
-      refreshChats(true),
+      refreshChats(),
       client.health().then((status) => setModel(status.model)),
     ])
       .catch((value) => {
@@ -239,6 +239,7 @@ export default function App() {
         chat_id: chatId,
         role: "user",
         content,
+        thinking: "",
         status: "complete",
         created_at: new Date().toISOString(),
       };
@@ -274,10 +275,21 @@ export default function App() {
             chat_id: chatId,
             role: "assistant",
             content: "",
+            thinking: "",
             status: "streaming",
             created_at: new Date().toISOString(),
           },
         ]);
+      },
+      onThinkingDelta(assistantId: string, text: string) {
+        if (activeIdRef.current !== chatId) return;
+        setMessages((current) =>
+          current.map((value) =>
+            value.id === assistantId
+              ? { ...value, thinking: value.thinking + text }
+              : value,
+          ),
+        );
       },
       onDelta(assistantId: string, text: string) {
         if (activeIdRef.current !== chatId) return;
@@ -344,7 +356,7 @@ export default function App() {
       setModel(health.model);
       setSettings(false);
       setError(undefined);
-      await refreshChats(true);
+      await refreshChats();
     } catch (value) {
       setSettingsError(value instanceof Error ? value.message : String(value));
     } finally {
@@ -478,13 +490,8 @@ export default function App() {
       </Animated.View>
       <KeyboardAvoidingView
         style={styles.main}
-        behavior={
-          Platform.OS === "ios"
-            ? "padding"
-            : Platform.OS === "android"
-              ? "height"
-              : undefined
-        }
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        enabled={Platform.OS === "ios"}
       >
         <View style={styles.header}>
           <Pressable
@@ -537,6 +544,7 @@ export default function App() {
               />
             ))
           )}
+          {showResponseWaiting && <ResponseWaiting styles={styles} />}
           {error && (
             <View style={styles.error}>
               <Text style={styles.errorTitle}>
@@ -664,6 +672,10 @@ function MessageView({
 }) {
   const user = message.role === "user";
   const entrance = useRef(new Animated.Value(0)).current;
+  const answerStarted = useRef(Boolean(message.content));
+  const [thinkingExpanded, setThinkingExpanded] = useState(
+    message.status === "streaming" && !message.content,
+  );
   useEffect(() => {
     Animated.timing(entrance, {
       toValue: 1,
@@ -672,6 +684,13 @@ function MessageView({
       useNativeDriver: true,
     }).start();
   }, [entrance]);
+  useEffect(() => {
+    if (!answerStarted.current && message.content) {
+      answerStarted.current = true;
+      setThinkingExpanded(false);
+    }
+  }, [message.content]);
+  if (!user && !message.content && !message.thinking) return null;
   return (
     <Animated.View
       style={[
@@ -691,18 +710,96 @@ function MessageView({
       ]}
     >
       <View style={[styles.messageBubble, user && styles.userBubble]}>
+        {!user && message.thinking && (
+          <View style={styles.thinkingBlock}>
+            <Pressable
+              onPress={() => setThinkingExpanded((value) => !value)}
+              style={styles.thinkingHeader}
+            >
+              <Text style={styles.thinkingTitle}>Thinking</Text>
+              <Text style={styles.thinkingChevron}>
+                {thinkingExpanded ? "⌃" : "⌄"}
+              </Text>
+            </Pressable>
+            {thinkingExpanded && (
+              <Text selectable style={styles.thinkingText}>
+                {message.thinking}
+              </Text>
+            )}
+          </View>
+        )}
         {user ? (
           <Text selectable style={styles.messageText}>
             {message.content}
           </Text>
-        ) : (
-          <MarkdownText content={message.content || "▍"} colors={colors} />
-        )}
+        ) : message.content ? (
+          <MarkdownText content={message.content} colors={colors} />
+        ) : null}
         {message.status === "failed" && (
           <Text style={styles.failed}>Generation interrupted</Text>
         )}
       </View>
     </Animated.View>
+  );
+}
+
+function ResponseWaiting({
+  styles,
+}: {
+  styles: ReturnType<typeof makeStyles>;
+}) {
+  const dots = useRef([
+    new Animated.Value(0.28),
+    new Animated.Value(0.28),
+    new Animated.Value(0.28),
+  ]).current;
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.stagger(
+        130,
+        dots.map((dot) =>
+          Animated.sequence([
+            Animated.timing(dot, {
+              toValue: 1,
+              duration: 360,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(dot, {
+              toValue: 0.28,
+              duration: 360,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+          ]),
+        ),
+      ),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [dots]);
+  return (
+    <View style={styles.waitingRow} accessibilityLabel="Waiting for response">
+      {dots.map((dot, index) => (
+        <Animated.View
+          key={index}
+          style={[
+            styles.waitingDot,
+            {
+              opacity: dot,
+              transform: [
+                {
+                  scale: dot.interpolate({
+                    inputRange: [0.28, 1],
+                    outputRange: [0.72, 1],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+      ))}
+    </View>
   );
 }
 
@@ -853,6 +950,41 @@ function makeStyles(c: typeof light, topInset: number) {
       borderBottomRightRadius: 5,
     },
     messageText: { color: c.text, fontSize: 15.5, lineHeight: 24 },
+    thinkingBlock: { marginBottom: 12, maxWidth: 680 },
+    thinkingHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      gap: 6,
+      paddingVertical: 2,
+    },
+    thinkingTitle: {
+      color: c.muted,
+      fontSize: 12,
+      fontStyle: "italic",
+      fontWeight: "600",
+    },
+    thinkingChevron: { color: c.muted, fontSize: 12 },
+    thinkingText: {
+      color: c.muted,
+      fontSize: 13.5,
+      fontStyle: "italic",
+      lineHeight: 20,
+      marginTop: 5,
+    },
+    waitingRow: {
+      height: 24,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      marginBottom: 24,
+    },
+    waitingDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+      backgroundColor: c.muted,
+    },
     failed: { color: c.danger, fontSize: 12, marginTop: 8 },
     error: {
       backgroundColor: c.surface,

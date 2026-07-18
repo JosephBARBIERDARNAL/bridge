@@ -61,6 +61,30 @@ export function shouldOpenHistoryDrawer(
   );
 }
 
+type ResponseMessage = {
+  role: "user" | "assistant";
+  content: string;
+  thinking: string;
+  status: "complete" | "streaming" | "failed";
+};
+
+export function shouldShowResponseWaiting(
+  busy: boolean,
+  messages: ResponseMessage[],
+) {
+  if (!busy) return false;
+  const streamingAssistant = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" && message.status === "streaming",
+    );
+  return (
+    !streamingAssistant ||
+    (!streamingAssistant.content && !streamingAssistant.thinking)
+  );
+}
+
 export function sanitizeMarkdownImages(markdown: string) {
   let result = "";
   let offset = 0;

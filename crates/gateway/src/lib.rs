@@ -214,7 +214,7 @@ async fn get_chat(
     AxumPath(chat_id): AxumPath<String>,
 ) -> Result<Json<ChatDetail>, ApiError> {
     let chat = fetch_chat(&state.pool, &chat_id).await?;
-    let messages = sqlx::query_as::<_, Message>("SELECT id, chat_id, role, content, status, created_at FROM messages WHERE chat_id = ? ORDER BY created_at, id")
+    let messages = sqlx::query_as::<_, Message>("SELECT id, chat_id, role, content, thinking, status, created_at FROM messages WHERE chat_id = ? ORDER BY created_at, id")
         .bind(&chat_id).fetch_all(&state.pool).await.map_err(ApiError::internal)?;
     Ok(Json(ChatDetail { chat, messages }))
 }
@@ -337,14 +337,18 @@ async fn start_generation(
         }
     };
 
-    let rows = sqlx::query_as::<_, Message>("SELECT id, chat_id, role, content, status, created_at FROM messages WHERE chat_id = ? AND (role = 'user' OR status = 'complete') ORDER BY created_at, id")
+    let rows = sqlx::query_as::<_, Message>("SELECT id, chat_id, role, content, thinking, status, created_at FROM messages WHERE chat_id = ? AND (role = 'user' OR status = 'complete') ORDER BY created_at, id")
         .bind(&chat_id).fetch_all(&state.pool).await.map_err(ApiError::internal)?;
     let mut history = Vec::new();
     for message in rows {
         history.push(if message.role == "user" {
             ChatMessage::user(message.content)
         } else {
-            ChatMessage::assistant(message.content)
+            let mut assistant = ChatMessage::assistant(message.content);
+            if !message.thinking.is_empty() {
+                assistant.thinking = Some(message.thinking);
+            }
+            assistant
         });
         if message.id == user_id {
             break;
@@ -377,10 +381,17 @@ async fn start_generation(
         let _guard = guard;
         yield Ok::<Event, Infallible>(Event::default().event("message_started").json_data(StreamStarted { user_message_id: stream_user_id, assistant_message_id: stream_assistant_id.clone() }).unwrap());
         let mut content = String::new();
+        let mut thinking = String::new();
         let mut failed = None;
         while let Some(item) = ollama_stream.next().await {
             match item {
                 Ok(response) => {
+                    if let Some(delta) = response.message.thinking {
+                        if !delta.is_empty() {
+                            thinking.push_str(&delta);
+                            yield Ok(Event::default().event("thinking_delta").json_data(StreamDelta { message_id: &stream_assistant_id, text: &delta }).unwrap());
+                        }
+                    }
                     let delta = response.message.content;
                     if !delta.is_empty() {
                         content.push_str(&delta);
@@ -391,12 +402,12 @@ async fn start_generation(
             }
         }
         if let Some(message) = failed {
-            let _ = sqlx::query("UPDATE messages SET content = ?, status = 'failed' WHERE id = ?").bind(&content).bind(&stream_assistant_id).execute(&pool).await;
+            let _ = sqlx::query("UPDATE messages SET content = ?, thinking = ?, status = 'failed' WHERE id = ?").bind(&content).bind(&thinking).bind(&stream_assistant_id).execute(&pool).await;
             yield Ok(Event::default().event("error").json_data(StreamError { code: "ollama_stream_error", message, retryable: true }).unwrap());
         } else {
-            let _ = sqlx::query("UPDATE messages SET content = ?, status = 'complete' WHERE id = ?").bind(&content).bind(&stream_assistant_id).execute(&pool).await;
+            let _ = sqlx::query("UPDATE messages SET content = ?, thinking = ?, status = 'complete' WHERE id = ?").bind(&content).bind(&thinking).bind(&stream_assistant_id).execute(&pool).await;
             let _ = sqlx::query("UPDATE chats SET updated_at = ? WHERE id = ?").bind(Utc::now().to_rfc3339()).bind(&chat_id).execute(&pool).await;
-            if let Ok(Some(message)) = sqlx::query_as::<_, Message>("SELECT id, chat_id, role, content, status, created_at FROM messages WHERE id = ?").bind(&stream_assistant_id).fetch_optional(&pool).await {
+            if let Ok(Some(message)) = sqlx::query_as::<_, Message>("SELECT id, chat_id, role, content, thinking, status, created_at FROM messages WHERE id = ?").bind(&stream_assistant_id).fetch_optional(&pool).await {
                 yield Ok(Event::default().event("message_completed").json_data(message).unwrap());
             }
         }
@@ -573,6 +584,7 @@ mod tests {
             .unwrap();
 
         let response = app
+            .clone()
             .oneshot(authorized(
                 "GET",
                 &format!("/v1/chats/{second_id}"),
@@ -584,6 +596,18 @@ mod tests {
         let detail: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(detail["chat"]["id"], second_id);
         assert_eq!(detail["messages"], serde_json::json!([]));
+
+        let response = app
+            .oneshot(authorized(
+                "GET",
+                &format!("/v1/chats/{first_id}"),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let detail: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(detail["messages"][0]["thinking"], "");
     }
 
     #[test]

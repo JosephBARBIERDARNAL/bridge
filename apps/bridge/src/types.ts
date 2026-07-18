@@ -10,6 +10,7 @@ export type Message = {
   chat_id: string;
   role: "user" | "assistant";
   content: string;
+  thinking: string;
   status: "complete" | "streaming" | "failed";
   created_at: string;
 };
@@ -30,6 +31,7 @@ export type StreamFailure = {
 };
 export type StreamListener = {
   onStarted(userMessageId: string, assistantMessageId: string): void;
+  onThinkingDelta(assistantMessageId: string, text: string): void;
   onDelta(assistantMessageId: string, text: string): void;
   onCompleted(message: Message): void;
   onError(error: StreamFailure): void;

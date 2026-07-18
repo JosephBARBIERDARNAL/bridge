@@ -51,6 +51,8 @@ export class NativeBridgeClient implements BridgeClient {
       if (event.requestId !== requestId) return;
       if (event.type === "started")
         listener.onStarted(event.userMessageId, event.assistantMessageId);
+      if (event.type === "thinking_delta")
+        listener.onThinkingDelta(event.assistantMessageId, event.text);
       if (event.type === "delta")
         listener.onDelta(event.assistantMessageId, event.text);
       if (event.type === "completed") listener.onCompleted(event.message);
