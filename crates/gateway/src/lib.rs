@@ -766,7 +766,9 @@ mod tests {
                 let responses = responses.clone();
                 async move {
                     recorded.lock().unwrap().push(body);
-                    let index = counter.fetch_add(1, Ordering::SeqCst).min(responses.len() - 1);
+                    let index = counter
+                        .fetch_add(1, Ordering::SeqCst)
+                        .min(responses.len() - 1);
                     responses[index].clone()
                 }
             }),
@@ -846,9 +848,15 @@ mod tests {
             "event: message_completed",
         ]
         .iter()
-        .map(|marker| body.find(marker).unwrap_or_else(|| panic!("missing {marker}")))
+        .map(|marker| {
+            body.find(marker)
+                .unwrap_or_else(|| panic!("missing {marker}"))
+        })
         .collect();
-        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "events out of order:\n{body}");
+        assert!(
+            order.windows(2).all(|pair| pair[0] < pair[1]),
+            "events out of order:\n{body}"
+        );
 
         let call = sse_event_data(&body, "tool_call").unwrap();
         assert_eq!(call["name"], "stub_tool");
@@ -876,9 +884,18 @@ mod tests {
 
         let bodies = bodies.lock().unwrap();
         assert_eq!(bodies.len(), 2);
-        assert!(bodies[0].contains(r#""tools":[{"type"#), "first request must offer tools");
-        assert!(bodies[0].contains(r#""role":"system""#), "tool runs get a system prompt");
-        assert!(bodies[1].contains(r#""role":"tool""#), "second request must carry the tool result");
+        assert!(
+            bodies[0].contains(r#""tools":[{"type"#),
+            "first request must offer tools"
+        );
+        assert!(
+            bodies[0].contains(r#""role":"system""#),
+            "tool runs get a system prompt"
+        );
+        assert!(
+            bodies[1].contains(r#""role":"tool""#),
+            "second request must carry the tool result"
+        );
         assert!(bodies[1].contains("stub result for"));
     }
 
@@ -900,7 +917,11 @@ mod tests {
         let _ = response.into_body().collect().await.unwrap();
 
         let bodies = bodies.lock().unwrap();
-        assert_eq!(bodies.len(), 1, "tool calls must be ignored when the toggle is off");
+        assert_eq!(
+            bodies.len(),
+            1,
+            "tool calls must be ignored when the toggle is off"
+        );
         assert!(!bodies[0].contains(r#""tools""#));
         assert!(!bodies[0].contains(r#""role":"system""#));
     }

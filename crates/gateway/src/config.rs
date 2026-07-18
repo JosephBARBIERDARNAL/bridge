@@ -45,10 +45,7 @@ impl ToolConfig {
             fetch_max_bytes: env_parse("BRIDGE_TOOL_FETCH_MAX_BYTES", default.fetch_max_bytes)?,
             page_max_chars: env_parse("BRIDGE_TOOL_PAGE_MAX_CHARS", default.page_max_chars)?,
             max_rounds: env_parse("BRIDGE_TOOL_MAX_ROUNDS", default.max_rounds)?,
-            search_max_results: env_parse(
-                "BRIDGE_SEARCH_MAX_RESULTS",
-                default.search_max_results,
-            )?,
+            search_max_results: env_parse("BRIDGE_SEARCH_MAX_RESULTS", default.search_max_results)?,
         })
     }
 }

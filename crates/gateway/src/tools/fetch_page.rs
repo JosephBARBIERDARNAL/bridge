@@ -65,10 +65,7 @@ impl Tool for FetchPageTool {
             return ToolOutcome::error("fetch_page found no readable text on the page");
         }
         let title = if extracted.title.is_empty() {
-            page.final_url
-                .host_str()
-                .unwrap_or("page")
-                .to_owned()
+            page.final_url.host_str().unwrap_or("page").to_owned()
         } else {
             extracted.title.clone()
         };
@@ -104,8 +101,23 @@ const SKIPPED_ELEMENTS: [&str; 12] = [
 ];
 
 const BLOCK_ELEMENTS: [&str; 17] = [
-    "p", "div", "li", "ul", "ol", "br", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "table",
-    "section", "article", "blockquote",
+    "p",
+    "div",
+    "li",
+    "ul",
+    "ol",
+    "br",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "tr",
+    "table",
+    "section",
+    "article",
+    "blockquote",
 ];
 
 pub fn extract_readable(html: &str) -> ExtractedPage {

@@ -297,8 +297,7 @@ impl BridgeClient {
         web_search: bool,
         listener: Box<dyn MessageStreamListener>,
     ) -> Arc<RequestHandle> {
-        let body =
-            serde_json::to_value(RetryInput { web_search }).expect("retry input serializes");
+        let body = serde_json::to_value(RetryInput { web_search }).expect("retry input serializes");
         self.spawn_stream(
             format!("v1/chats/{chat_id}/messages/{user_message_id}/retry"),
             Some(body),
@@ -434,7 +433,12 @@ fn dispatch_sse(frame: &str, listener: &dyn MessageStreamListener) -> Result<(),
         "tool_call" => {
             let value: ToolCallEvent =
                 serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
-            listener.on_tool_call(value.message_id, value.call_index, value.name, value.arguments);
+            listener.on_tool_call(
+                value.message_id,
+                value.call_index,
+                value.name,
+                value.arguments,
+            );
         }
         "tool_result" => {
             let value: ToolResultEvent =

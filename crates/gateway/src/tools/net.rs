@@ -11,8 +11,7 @@ use url::{Host, Url};
 
 const MAX_REDIRECTS: usize = 4;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const USER_AGENT: &str =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 /// HTTP fetcher for model-chosen URLs. Every hop (including redirects) is
 /// resolved first and rejected if any address points inside the private
@@ -222,7 +221,13 @@ mod tests {
 
     #[test]
     fn allows_public_addresses() {
-        for allowed in ["1.1.1.1", "8.8.8.8", "104.16.0.1", "2606:4700::1111", "::ffff:1.1.1.1"] {
+        for allowed in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "104.16.0.1",
+            "2606:4700::1111",
+            "::ffff:1.1.1.1",
+        ] {
             let ip: IpAddr = allowed.parse().unwrap();
             assert!(!is_forbidden_ip(ip), "{allowed} should be allowed");
         }

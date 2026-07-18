@@ -40,7 +40,9 @@ impl SearchProvider for DuckDuckGo {
         let page = self.fetcher.fetch(url.as_str()).await?;
         let mut results = parse_results(&page.body);
         if results.is_empty() {
-            bail!("DuckDuckGo returned no results (the query may have no matches, or the endpoint is rate-limiting)");
+            bail!(
+                "DuckDuckGo returned no results (the query may have no matches, or the endpoint is rate-limiting)"
+            );
         }
         results.truncate(max_results);
         Ok(results)

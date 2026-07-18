@@ -8,6 +8,7 @@ import {
   type GestureResponderEvent,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -30,11 +31,14 @@ import {
   shouldShowResponseWaiting,
 } from "./chatUi";
 import { createClient } from "./client";
-import type {
-  ChatSummary,
-  Message,
-  RequestHandle,
-  StreamFailure,
+import {
+  parseToolCalls,
+  type ChatSummary,
+  type Message,
+  type RequestHandle,
+  type StreamFailure,
+  type ToolCallRecord,
+  type ToolSource,
 } from "./types";
 import { dark, light } from "./theme";
 
@@ -59,6 +63,9 @@ export default function App() {
   const activeIdRef = useRef<string | undefined>(undefined);
   const [messages, setMessages] = useState<Message[]>([]);
   const [prompt, setPrompt] = useState("");
+  const [searchByChat, setSearchByChat] = useState<Record<string, boolean>>(
+    {},
+  );
   const [busyChats, setBusyChats] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<StreamFailure>();
   const [loading, setLoading] = useState(true);
@@ -78,6 +85,8 @@ export default function App() {
   const skipNextLoad = useRef<string | undefined>(undefined);
   const busy = activeId ? busyChats.has(activeId) : false;
   const showResponseWaiting = shouldShowResponseWaiting(busy, messages);
+  const searchKey = activeId ?? "new";
+  const webSearch = searchByChat[searchKey] ?? false;
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -224,6 +233,11 @@ export default function App() {
   async function ensureChat() {
     if (activeId) return activeId;
     const chat = await client.createChat();
+    setSearchByChat((current) => {
+      if (current["new"] === undefined) return current;
+      const { new: fresh, ...rest } = current;
+      return { ...rest, [chat.id]: fresh };
+    });
     setChats((current) => [chat, ...current]);
     selectChat(chat.id, true);
     return chat.id;
@@ -232,6 +246,7 @@ export default function App() {
   async function send() {
     const content = prompt.trim();
     if (!content || busy) return;
+    const search = webSearch;
     try {
       const chatId = await ensureChat();
       const user: Message = {
@@ -240,6 +255,7 @@ export default function App() {
         role: "user",
         content,
         thinking: "",
+        tool_calls: "",
         status: "complete",
         created_at: new Date().toISOString(),
       };
@@ -251,6 +267,7 @@ export default function App() {
       const handle = client.sendMessage(
         chatId,
         content,
+        search,
         streamListener(chatId),
       );
       requests.current.set(chatId, handle);
@@ -276,6 +293,7 @@ export default function App() {
             role: "assistant",
             content: "",
             thinking: "",
+            tool_calls: "",
             status: "streaming",
             created_at: new Date().toISOString(),
           },
@@ -301,6 +319,41 @@ export default function App() {
           ),
         );
       },
+      onToolCall(
+        assistantId: string,
+        callIndex: number,
+        name: string,
+        argumentsJson: string,
+      ) {
+        if (activeIdRef.current !== chatId) return;
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = JSON.parse(argumentsJson);
+        } catch {
+          parsed = {};
+        }
+        const record: ToolCallRecord = {
+          name,
+          arguments: parsed,
+          status: "running",
+        };
+        updateToolCall(assistantId, callIndex, record);
+      },
+      onToolResult(
+        assistantId: string,
+        callIndex: number,
+        name: string,
+        recordJson: string,
+      ) {
+        if (activeIdRef.current !== chatId) return;
+        let record: ToolCallRecord;
+        try {
+          record = JSON.parse(recordJson);
+        } catch {
+          record = { name, arguments: {}, status: "error" };
+        }
+        updateToolCall(assistantId, callIndex, record);
+      },
       onCompleted(message: Message) {
         if (activeIdRef.current === chatId)
           setMessages((current) =>
@@ -322,6 +375,21 @@ export default function App() {
     };
   }
 
+  function updateToolCall(
+    assistantId: string,
+    callIndex: number,
+    record: ToolCallRecord,
+  ) {
+    setMessages((current) =>
+      current.map((value) => {
+        if (value.id !== assistantId) return value;
+        const records = parseToolCalls(value.tool_calls);
+        records[callIndex] = record;
+        return { ...value, tool_calls: JSON.stringify(records) };
+      }),
+    );
+  }
+
   function stop() {
     if (!activeId) return;
     requests.current.get(activeId)?.cancel();
@@ -341,6 +409,7 @@ export default function App() {
     const handle = client.retryMessage(
       activeId,
       user.id,
+      webSearch,
       streamListener(activeId),
     );
     requests.current.set(activeId, handle);
@@ -558,6 +627,27 @@ export default function App() {
         </ScrollView>
         <View style={styles.composerWrap}>
           <View style={styles.composer}>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityState={{ checked: webSearch }}
+              accessibilityLabel="Search the web"
+              style={[styles.toolToggle, webSearch && styles.toolToggleActive]}
+              onPress={() =>
+                setSearchByChat((current) => ({
+                  ...current,
+                  [searchKey]: !(current[searchKey] ?? false),
+                }))
+              }
+            >
+              <Text
+                style={[
+                  styles.toolToggleText,
+                  webSearch && styles.toolToggleTextActive,
+                ]}
+              >
+                🌐 Web
+              </Text>
+            </Pressable>
             <TextInput
               multiline
               value={prompt}
@@ -673,6 +763,21 @@ function MessageView({
   const [thinkingExpanded, setThinkingExpanded] = useState(
     message.status === "streaming" && !message.content,
   );
+  const toolCalls = useMemo(
+    () => parseToolCalls(message.tool_calls).filter(Boolean),
+    [message.tool_calls],
+  );
+  const sources = useMemo(() => {
+    const seen = new Set<string>();
+    const values: ToolSource[] = [];
+    for (const record of toolCalls)
+      for (const source of record.sources ?? [])
+        if (source.url && !seen.has(source.url)) {
+          seen.add(source.url);
+          values.push(source);
+        }
+    return values;
+  }, [toolCalls]);
   useEffect(() => {
     Animated.timing(entrance, {
       toValue: 1,
@@ -687,7 +792,8 @@ function MessageView({
       setThinkingExpanded(false);
     }
   }, [message.content]);
-  if (!user && !message.content && !message.thinking) return null;
+  if (!user && !message.content && !message.thinking && !toolCalls.length)
+    return null;
   return (
     <Animated.View
       style={[
@@ -725,6 +831,15 @@ function MessageView({
             )}
           </View>
         )}
+        {!user &&
+          toolCalls.map((record, index) => (
+            <ToolCallView
+              key={index}
+              record={record}
+              styles={styles}
+              colors={colors}
+            />
+          ))}
         {user ? (
           <Text selectable style={styles.messageText}>
             {message.content}
@@ -732,11 +847,97 @@ function MessageView({
         ) : message.content ? (
           <MarkdownText content={message.content} colors={colors} />
         ) : null}
+        {!user && sources.length > 0 && message.content ? (
+          <View style={styles.sourcesRow}>
+            {sources.map((source, index) => (
+              <Pressable
+                key={source.url}
+                style={styles.sourceChip}
+                onPress={() => void Linking.openURL(source.url)}
+              >
+                <Text numberOfLines={1} style={styles.sourceChipText}>
+                  {index + 1} · {hostnameOf(source.url)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         {message.status === "failed" && (
           <Text style={styles.failed}>Generation interrupted</Text>
         )}
       </View>
     </Animated.View>
+  );
+}
+
+function ToolCallView({
+  record,
+  styles,
+  colors,
+}: {
+  record: ToolCallRecord;
+  styles: ReturnType<typeof makeStyles>;
+  colors: typeof light;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const running = record.status === "running";
+  const result = (record.result ?? {}) as {
+    results?: { title: string; url: string; snippet: string }[];
+    excerpt?: string;
+    error?: string;
+  };
+  const title =
+    record.name === "web_search"
+      ? `Searched: “${String(record.arguments?.query ?? "")}”`
+      : record.name === "fetch_page"
+        ? `Read: ${hostnameOf(String(record.arguments?.url ?? ""))}`
+        : record.name;
+  return (
+    <View style={styles.toolBlock}>
+      <Pressable
+        onPress={() => !running && setExpanded((value) => !value)}
+        style={styles.toolHeader}
+      >
+        <Text style={styles.toolTitle}>
+          {record.status === "error" ? "⚠ " : "🔍 "}
+          {title}
+        </Text>
+        {running ? (
+          <ActivityIndicator size="small" color={colors.muted} />
+        ) : (
+          <Text style={styles.thinkingChevron}>{expanded ? "⌃" : "⌄"}</Text>
+        )}
+      </Pressable>
+      {expanded && !running && (
+        <View style={styles.toolBody}>
+          {record.status === "error" ? (
+            <Text selectable style={styles.toolSnippet}>
+              {result.error ?? "The tool call failed."}
+            </Text>
+          ) : result.results ? (
+            result.results.map((item, index) => (
+              <View key={index} style={styles.toolResultRow}>
+                <Pressable onPress={() => void Linking.openURL(item.url)}>
+                  <Text style={styles.toolResultTitle}>{item.title}</Text>
+                  <Text numberOfLines={1} style={styles.toolResultUrl}>
+                    {hostnameOf(item.url)}
+                  </Text>
+                </Pressable>
+                {item.snippet ? (
+                  <Text selectable style={styles.toolSnippet}>
+                    {item.snippet}
+                  </Text>
+                ) : null}
+              </View>
+            ))
+          ) : (
+            <Text selectable numberOfLines={12} style={styles.toolSnippet}>
+              {result.excerpt ?? ""}
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -805,6 +1006,10 @@ const promptDialog = (title: string, value: string) =>
 
 function formatModelName(model: string) {
   return model.replace(":", " · ");
+}
+
+function hostnameOf(url: string) {
+  return url.replace(/^https?:\/\//, "").split(/[/?#]/)[0] || url;
 }
 
 function makeStyles(c: typeof light, topInset: number) {
@@ -963,6 +1168,58 @@ function makeStyles(c: typeof light, topInset: number) {
       fontWeight: "600",
     },
     thinkingChevron: { color: c.muted, fontSize: 12 },
+    toolBlock: { marginBottom: 10, maxWidth: 680 },
+    toolHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      gap: 6,
+      paddingVertical: 2,
+    },
+    toolTitle: { color: c.muted, fontSize: 12.5, fontWeight: "600" },
+    toolBody: {
+      marginTop: 6,
+      paddingLeft: 10,
+      borderLeftWidth: 2,
+      borderLeftColor: c.border,
+      gap: 10,
+    },
+    toolResultRow: { gap: 1 },
+    toolResultTitle: { color: c.text, fontSize: 13.5, fontWeight: "600" },
+    toolResultUrl: { color: c.muted, fontSize: 12 },
+    toolSnippet: { color: c.muted, fontSize: 13, lineHeight: 19 },
+    sourcesRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 6,
+      marginTop: 10,
+    },
+    sourceChip: {
+      backgroundColor: c.surface,
+      borderColor: c.border,
+      borderWidth: 1,
+      borderRadius: 999,
+      paddingVertical: 4,
+      paddingHorizontal: 10,
+      maxWidth: 220,
+    },
+    sourceChipText: { color: c.muted, fontSize: 12 },
+    toolToggle: {
+      borderColor: c.border,
+      borderWidth: 1,
+      borderRadius: 19,
+      height: 38,
+      paddingHorizontal: 12,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 6,
+    },
+    toolToggleActive: {
+      borderColor: c.accent,
+      backgroundColor: c.background,
+    },
+    toolToggleText: { color: c.muted, fontSize: 13, fontWeight: "600" },
+    toolToggleTextActive: { color: c.text },
     thinkingText: {
       color: c.muted,
       fontSize: 13.5,
