@@ -30,5 +30,4 @@ for optional in ollama tailscale adb; do
   fi
 done
 
-echo "Bridge development dependencies are ready. Run: just dev"
-
+echo "Bridge development dependencies are ready. Run: just android"

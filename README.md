@@ -29,7 +29,7 @@ flowchart LR
 
 - The Mac does the heavy lifting (e.g., server-side logic). It runs the gateway as a launchd background service, keeps the full chat history in a local SQLite database, and hosts the models through Ollama.
 
-- The phone is a thin client: the React Native UI talks to a Rust networking core (shared with the browser preview through UniFFI), which sends requests to the gateway and receives the model's reply as a live token stream over server-sent events.
+- The phone is a thin client: the React Native UI talks to a Rust networking core through Kotlin and UniFFI. The core sends requests to the gateway and receives the model's reply as a live token stream over server-sent events.
 
 The app works exactly when it can reach your Mac: on the same network, or from anywhere in the world through your private Tailscale network, as long as the Mac is awake and running. When the Mac is unreachable, you can't chat or browse past conversations until the connection is back.
 
@@ -38,8 +38,6 @@ The app works exactly when it can reach your Mac: on the same network, or from a
 ## Security
 
 Bridge keeps inference and application data on hardware you control. Ollama runs the model on the Mac, chat history is stored in SQLite on the Mac, and the Android app only renders the UI and exchanges messages with the gateway.
-
-When Web is enabled, only the current user message is available to the search planner. Bridge then permits page fetches only for HTTPS URLs returned by that search and disables every tool before the final answer. Earlier chat history is provided only to the tool-free final response. Outbound links in the app are likewise restricted to HTTPS.
 
 The gateway listens on `127.0.0.1:8787` by default, so it is not directly reachable from the Mac's LAN or the public internet. Tailscale Serve exposes that loopback service only inside your private tailnet through a stable `https://<machine>.<tailnet>.ts.net` address.
 

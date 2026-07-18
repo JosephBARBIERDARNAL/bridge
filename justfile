@@ -8,25 +8,13 @@ default:
 install:
     ./scripts/install.sh
 
-# Run the gateway and the fast mock browser preview.
+# Run the Rust gateway for local development.
 dev:
-    ./scripts/dev.sh mock
-
-# Run the gateway and browser preview against real Ollama inference.
-dev-real:
-    ./scripts/dev.sh real
+    cargo run -p bridge-gateway
 
 # Run only the Rust gateway.
 gateway:
     cargo run -p bridge-gateway
-
-# Run only the mock browser preview.
-web:
-    bun run dev
-
-# Run only the real browser preview; the gateway must already be running.
-web-real:
-    bun run dev:real
 
 # Compile and install the debug Android app on a connected phone.
 android:
@@ -49,12 +37,11 @@ test:
     cargo test --workspace
     bun run test
 
-# Compile, type-check, test formatting, and build the web preview.
+# Compile, type-check, and test formatting.
 check:
     cargo check --workspace
     cargo fmt --all -- --check
     bun run typecheck
-    bun run build:web
 
 # Format Rust, TypeScript, Kotlin, JSON, and Markdown sources.
 fmt:
@@ -80,4 +67,4 @@ logs:
 # Remove reproducible build output while preserving credentials and databases.
 clean:
     cargo clean
-    rm -rf apps/bridge/dist apps/bridge/android/app/build apps/bridge/android/build
+    rm -rf apps/bridge/android/app/build apps/bridge/android/build

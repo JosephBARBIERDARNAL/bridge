@@ -9,7 +9,6 @@ import {
   KeyboardAvoidingView,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -47,8 +46,7 @@ const client = createClient();
 export default function App() {
   const [darkMode, setDarkMode] = useState(DEFAULT_DARK_MODE);
   const colors = darkMode ? dark : light;
-  const topInset =
-    Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 30) : 0;
+  const topInset = Math.max(StatusBar.currentHeight ?? 0, 30);
   const styles = useMemo(
     () => makeStyles(colors, topInset),
     [colors, topInset],
@@ -110,7 +108,7 @@ export default function App() {
     ])
       .catch((value) => {
         showError(value);
-        if (Platform.OS !== "web") setSettings(true);
+        setSettings(true);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -207,24 +205,10 @@ export default function App() {
       setChats(next);
       if (activeId === chat.id) setActiveId(next[0]?.id);
     };
-    if (Platform.OS === "web") {
-      if (confirm(`Delete “${chat.title}”?`)) await remove();
-    } else
-      Alert.alert("Delete chat?", chat.title, [
-        { text: "Cancel" },
-        { text: "Delete", style: "destructive", onPress: () => void remove() },
-      ]);
-  }
-
-  async function renameChat(chat: ChatSummary) {
-    if (Platform.OS !== "web")
-      return Alert.alert("Rename from the web preview for now");
-    const title = promptDialog("Rename chat", chat.title);
-    if (!title?.trim()) return;
-    const updated = await client.renameChat(chat.id, title.trim());
-    setChats((current) =>
-      current.map((value) => (value.id === updated.id ? updated : value)),
-    );
+    Alert.alert("Delete chat?", chat.title, [
+      { text: "Cancel" },
+      { text: "Delete", style: "destructive", onPress: () => void remove() },
+    ]);
   }
 
   async function ensureChat() {
@@ -525,9 +509,6 @@ export default function App() {
                   {chat.title}
                 </Text>
                 <View style={styles.chatActions}>
-                  <Pressable onPress={() => void renameChat(chat)}>
-                    <Text style={styles.smallIcon}>✎</Text>
-                  </Pressable>
                   <Pressable onPress={() => void removeChat(chat)}>
                     <Text style={[styles.smallIcon, styles.danger]}>×</Text>
                   </Pressable>
@@ -551,11 +532,7 @@ export default function App() {
           </Pressable>
         </View>
       </Animated.View>
-      <KeyboardAvoidingView
-        style={styles.main}
-        behavior={Platform.OS === "web" ? undefined : "padding"}
-        enabled={Platform.OS !== "web"}
-      >
+      <KeyboardAvoidingView style={styles.main} behavior="padding">
         <View style={styles.header}>
           <Pressable
             onPress={() => setDrawer((value) => !value)}
@@ -574,9 +551,7 @@ export default function App() {
           style={styles.messages}
           contentContainerStyle={styles.messageContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={
-            Platform.OS === "ios" ? "interactive" : "on-drag"
-          }
+          keyboardDismissMode="on-drag"
           onScroll={trackScroll}
           onTouchStart={startHistorySwipe}
           onTouchMove={trackHistorySwipe}
@@ -658,17 +633,6 @@ export default function App() {
                   scroll.current?.scrollToEnd({ animated: true }),
                 );
               }}
-              onKeyPress={(event) => {
-                if (
-                  Platform.OS === "web" &&
-                  event.nativeEvent.key === "Enter" &&
-                  !(event.nativeEvent as unknown as { shiftKey?: boolean })
-                    .shiftKey
-                ) {
-                  event.preventDefault?.();
-                  void send();
-                }
-              }}
             />
             <Pressable
               style={[
@@ -712,9 +676,8 @@ export default function App() {
               placeholderTextColor={colors.muted}
             />
             <Text style={styles.settingsHelp}>
-              {Platform.OS === "web"
-                ? "Real browser mode uses the token from .env through the Vite proxy."
-                : "The token is encrypted by Android Keystore and is never stored in JavaScript."}
+              The token is encrypted by Android Keystore and is never stored in
+              JavaScript.
             </Text>
             {settingsError && (
               <View style={styles.settingsError}>
@@ -997,9 +960,6 @@ function ResponseWaiting({
     </View>
   );
 }
-
-const promptDialog = (title: string, value: string) =>
-  globalThis.prompt?.(title, value);
 
 function formatModelName(model: string) {
   return model.replace(":", " · ");

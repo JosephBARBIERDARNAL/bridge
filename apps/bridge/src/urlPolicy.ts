@@ -8,8 +8,7 @@ export function normalizeHttpsUrl(raw: string) {
       !url.hostname
     )
       return undefined;
-    url.hash = "";
-    return url.toString();
+    return url.toString().split("#", 1)[0];
   } catch {
     return undefined;
   }
