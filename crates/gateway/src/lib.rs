@@ -386,11 +386,11 @@ async fn start_generation(
         while let Some(item) = ollama_stream.next().await {
             match item {
                 Ok(response) => {
-                    if let Some(delta) = response.message.thinking {
-                        if !delta.is_empty() {
-                            thinking.push_str(&delta);
-                            yield Ok(Event::default().event("thinking_delta").json_data(StreamDelta { message_id: &stream_assistant_id, text: &delta }).unwrap());
-                        }
+                    if let Some(delta) = response.message.thinking
+                        && !delta.is_empty()
+                    {
+                        thinking.push_str(&delta);
+                        yield Ok(Event::default().event("thinking_delta").json_data(StreamDelta { message_id: &stream_assistant_id, text: &delta }).unwrap());
                     }
                     let delta = response.message.content;
                     if !delta.is_empty() {

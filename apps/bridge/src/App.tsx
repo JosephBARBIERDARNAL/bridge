@@ -45,7 +45,7 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(systemLight);
   const colors = darkMode ? dark : light;
   const topInset =
-    Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 32) : 0;
+    Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 60) : 0;
   const styles = useMemo(
     () => makeStyles(colors, topInset),
     [colors, topInset],
