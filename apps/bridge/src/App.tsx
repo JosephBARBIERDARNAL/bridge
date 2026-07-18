@@ -437,9 +437,6 @@ export default function App() {
       >
         <View style={styles.sidebar}>
           <View style={styles.brandRow}>
-            <View style={styles.logo}>
-              <Text style={styles.logoText}>B</Text>
-            </View>
             <Text style={styles.brand}>Bridge</Text>
             <Pressable onPress={() => setDrawer(false)}>
               <Text style={styles.icon}>×</Text>
