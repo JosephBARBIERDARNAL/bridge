@@ -490,8 +490,8 @@ export default function App() {
       </Animated.View>
       <KeyboardAvoidingView
         style={styles.main}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        enabled={Platform.OS === "ios"}
+        behavior={Platform.OS === "web" ? undefined : "padding"}
+        enabled={Platform.OS !== "web"}
       >
         <View style={styles.header}>
           <Pressable
