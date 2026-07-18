@@ -7,8 +7,11 @@ use std::{
     collections::HashSet,
     convert::Infallible,
     path::Path,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use async_stream::stream;
@@ -37,9 +40,12 @@ use ollama_rs::{
 use sqlx_core::{query::query, query_as::query_as, query_scalar::query_scalar};
 use sqlx_sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use subtle::ConstantTimeEq;
+use tracing::Instrument;
 use uuid::Uuid;
 
 pub use config::Config;
+
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 pub struct AppState {
@@ -67,15 +73,27 @@ impl Drop for ActiveGeneration {
             && let Ok(runtime) = tokio::runtime::Handle::try_current()
         {
             let pool = self.pool.clone();
+            let chat_id = self.chat_id.clone();
             runtime.spawn(async move {
-                if let Err(error) = query(
+                match query(
                     "UPDATE messages SET status = 'failed' WHERE id = ? AND status = 'streaming'",
                 )
-                .bind(assistant_id)
+                .bind(&assistant_id)
                 .execute(&pool)
                 .await
                 {
-                    tracing::error!(%error, "failed to finalize abandoned generation");
+                    Ok(result) if result.rows_affected() > 0 => tracing::warn!(
+                        chat_id = %chat_id,
+                        assistant_message_id = %assistant_id,
+                        "Generation stream ended before completion; marked the message as failed"
+                    ),
+                    Ok(_) => {}
+                    Err(error) => tracing::error!(
+                        %error,
+                        chat_id = %chat_id,
+                        assistant_message_id = %assistant_id,
+                        "Failed to finalize an abandoned generation"
+                    ),
                 }
             });
         }
@@ -84,6 +102,7 @@ impl Drop for ActiveGeneration {
 
 impl AppState {
     pub async fn connect(config: &Config) -> anyhow::Result<Self> {
+        tracing::info!(database = %config.database_path.display(), "Opening gateway database");
         if let Some(parent) = config.database_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -103,9 +122,22 @@ impl AppState {
         .await?
         .run(&pool)
         .await?;
-        query("UPDATE messages SET status = 'failed' WHERE status = 'streaming'")
+        tracing::info!("Database migrations are up to date");
+        let recovered = query("UPDATE messages SET status = 'failed' WHERE status = 'streaming'")
             .execute(&pool)
             .await?;
+        if recovered.rows_affected() > 0 {
+            tracing::warn!(
+                messages = recovered.rows_affected(),
+                "Marked interrupted assistant messages as failed"
+            );
+        }
+
+        tracing::info!(
+            max_connections = 5,
+            model = %config.model,
+            "Gateway state initialized"
+        );
 
         Ok(Self {
             pool,
@@ -177,7 +209,52 @@ pub fn router(state: AppState) -> Router {
         )
         .route_layer(middleware::from_fn_with_state(state.clone(), authenticate));
 
-    Router::new().nest("/v1", protected).with_state(state)
+    Router::new()
+        .nest("/v1", protected)
+        .layer(middleware::from_fn(log_request))
+        .with_state(state)
+}
+
+async fn log_request(request: axum::extract::Request, next: Next) -> Response {
+    let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let span = tracing::info_span!(
+        "http_request",
+        request_id,
+        method = %method,
+        path = %path
+    );
+
+    async move {
+        let started_at = Instant::now();
+        tracing::info!("Request received");
+        let response = next.run(request).await;
+        let status = response.status();
+        let elapsed_ms = started_at.elapsed().as_millis() as u64;
+        if status.is_server_error() {
+            tracing::error!(
+                status = status.as_u16(),
+                elapsed_ms,
+                "Request finished with a server error"
+            );
+        } else if status.is_client_error() {
+            tracing::warn!(
+                status = status.as_u16(),
+                elapsed_ms,
+                "Request finished with a client error"
+            );
+        } else {
+            tracing::info!(
+                status = status.as_u16(),
+                elapsed_ms,
+                "Request finished successfully"
+            );
+        }
+        response
+    }
+    .instrument(span)
+    .await
 }
 
 async fn authenticate(
@@ -195,6 +272,7 @@ async fn authenticate(
             && bool::from(value.as_bytes().ct_eq(state.token.as_bytes()))
     });
     if !authorized {
+        tracing::warn!("Authentication rejected: bearer token is missing or invalid");
         return ApiError {
             status: StatusCode::UNAUTHORIZED,
             code: "unauthorized",
@@ -214,6 +292,13 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
     match state.ollama.list_local_models().await {
         Ok(models) => {
             let available = models.iter().any(|item| item.name == state.model);
+            tracing::info!(
+                ollama = "ok",
+                model = %state.model,
+                model_available = available,
+                local_models = models.len(),
+                "Health check completed"
+            );
             Ok(Json(HealthResponse {
                 gateway: "ok",
                 database: "ok",
@@ -222,13 +307,20 @@ async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, A
                 model_available: available,
             }))
         }
-        Err(error) => Ok(Json(HealthResponse {
-            gateway: "ok",
-            database: "ok",
-            ollama: "unavailable",
-            model: format!("{} ({error})", state.model),
-            model_available: false,
-        })),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                model = %state.model,
+                "Health check could not reach Ollama"
+            );
+            Ok(Json(HealthResponse {
+                gateway: "ok",
+                database: "ok",
+                ollama: "unavailable",
+                model: format!("{} ({error})", state.model),
+                model_available: false,
+            }))
+        }
     }
 }
 
@@ -239,6 +331,7 @@ async fn list_chats(State(state): State<AppState>) -> Result<Json<Vec<ChatSummar
     .fetch_all(&state.pool)
     .await
     .map_err(ApiError::internal)?;
+    tracing::info!(chat_count = chats.len(), "Listed chats");
     Ok(Json(chats))
 }
 
@@ -254,6 +347,7 @@ async fn create_chat(
         .execute(&state.pool)
         .await
         .map_err(ApiError::internal)?;
+    tracing::info!(chat_id = %id, "Created chat");
     Ok((
         StatusCode::CREATED,
         Json(ChatSummary {
@@ -272,6 +366,7 @@ async fn get_chat(
     let chat = fetch_chat(&state.pool, &chat_id).await?;
     let messages = query_as::<_, Message>("SELECT id, chat_id, role, content, thinking, tool_calls, status, created_at FROM messages WHERE chat_id = ? ORDER BY created_at, id")
         .bind(&chat_id).fetch_all(&state.pool).await.map_err(ApiError::internal)?;
+    tracing::info!(chat_id = %chat_id, message_count = messages.len(), "Loaded chat");
     Ok(Json(ChatDetail { chat, messages }))
 }
 
@@ -296,6 +391,11 @@ async fn update_chat(
     if result.rows_affected() == 0 {
         return Err(ApiError::not_found("Chat"));
     }
+    tracing::info!(
+        chat_id = %chat_id,
+        title_characters = title.chars().count(),
+        "Updated chat title"
+    );
     Ok(Json(fetch_chat(&state.pool, &chat_id).await?))
 }
 
@@ -311,6 +411,7 @@ async fn delete_chat(
     if result.rows_affected() == 0 {
         return Err(ApiError::not_found("Chat"));
     }
+    tracing::info!(chat_id = %chat_id, "Deleted chat");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -354,6 +455,13 @@ async fn send_message(
             .map_err(ApiError::internal)?;
     }
     transaction.commit().await.map_err(ApiError::internal)?;
+    tracing::info!(
+        chat_id = %chat_id,
+        user_message_id = %user_id,
+        content_characters = content.chars().count(),
+        web_search = input.web_search,
+        "Saved user message; starting assistant generation"
+    );
     start_generation(state, chat_id, user_id, input.web_search).await
 }
 
@@ -370,7 +478,15 @@ async fn retry_message(
         .await
         .map_err(ApiError::internal)?;
     match role.as_deref() {
-        Some("user") => start_generation(state, chat_id, message_id, web_search).await,
+        Some("user") => {
+            tracing::info!(
+                chat_id = %chat_id,
+                user_message_id = %message_id,
+                web_search,
+                "Retrying assistant generation"
+            );
+            start_generation(state, chat_id, message_id, web_search).await
+        }
         Some(_) => Err(ApiError::bad_request("Only user messages can be retried")),
         None => Err(ApiError::not_found("Message")),
     }
@@ -461,9 +577,15 @@ async fn start_generation(
     user_id: String,
     tools_enabled: bool,
 ) -> Result<Response, ApiError> {
+    let generation_started_at = Instant::now();
     let mut guard = {
         let mut active = state.active_chats.lock().map_err(ApiError::internal)?;
         if !active.insert(chat_id.clone()) {
+            tracing::warn!(
+                chat_id = %chat_id,
+                user_message_id = %user_id,
+                "Generation was rejected because this chat is already active"
+            );
             return Err(ApiError::conflict(
                 "This chat already has an active response",
             ));
@@ -478,6 +600,7 @@ async fn start_generation(
 
     let rows = query_as::<_, Message>("SELECT id, chat_id, role, content, thinking, tool_calls, status, created_at FROM messages WHERE chat_id = ? AND (role = 'user' OR status = 'complete') ORDER BY created_at, id")
         .bind(&chat_id).fetch_all(&state.pool).await.map_err(ApiError::internal)?;
+    let stored_message_count = rows.len();
     // Earlier tool transcripts are deliberately not replayed into model
     // context; only the final user/assistant text carries over.
     let mut history = Vec::new();
@@ -512,6 +635,16 @@ async fn start_generation(
         ));
     }
 
+    tracing::info!(
+        chat_id = %chat_id,
+        user_message_id = %user_id,
+        model = %state.model,
+        web_search = tools_enabled,
+        stored_messages = stored_message_count,
+        context_messages = history.len(),
+        "Preparing Ollama generation"
+    );
+
     let initial_request = if tools_enabled {
         ChatMessageRequest::new(
             state.model.clone(),
@@ -531,6 +664,12 @@ async fn start_generation(
         .send_chat_messages_stream(initial_request)
         .await
         .map_err(|error| ApiError::unavailable(error.to_string()))?;
+    tracing::info!(
+        chat_id = %chat_id,
+        user_message_id = %user_id,
+        preparation_ms = generation_started_at.elapsed().as_millis() as u64,
+        "Ollama accepted the generation request"
+    );
     let assistant_id = Uuid::new_v4().to_string();
     let created_at = Utc::now().to_rfc3339();
     query("INSERT INTO messages(id, chat_id, role, content, status, created_at) VALUES (?, ?, 'assistant', '', 'streaming', ?)")
@@ -542,6 +681,12 @@ async fn start_generation(
     let stream_assistant_id = assistant_id.clone();
     let output = stream! {
         let _guard = guard;
+        tracing::info!(
+            chat_id = %chat_id,
+            user_message_id = %stream_user_id,
+            assistant_message_id = %stream_assistant_id,
+            "Assistant event stream opened"
+        );
         yield Ok::<Event, Infallible>(Event::default().event("message_started").json_data(StreamStarted { user_message_id: stream_user_id, assistant_message_id: stream_assistant_id.clone() }).unwrap());
         let mut content = String::new();
         let mut thinking = String::new();
@@ -564,6 +709,14 @@ async fn start_generation(
                     for call in pending {
                         let name = call.function.name;
                         let arguments = call.function.arguments;
+                        let tool_started_at = Instant::now();
+                        tracing::info!(
+                            chat_id = %chat_id,
+                            assistant_message_id = %stream_assistant_id,
+                            call_index,
+                            tool = %name,
+                            "Starting research tool"
+                        );
                         yield Ok(Event::default().event("tool_call").json_data(StreamToolCall { message_id: &stream_assistant_id, call_index, name: &name, arguments: arguments.to_string() }).unwrap());
                         let outcome = if name == "web_search" {
                             match state.tools.get(&name) {
@@ -582,6 +735,16 @@ async fn start_generation(
                                 }
                             }
                         }
+                        tracing::info!(
+                            chat_id = %chat_id,
+                            assistant_message_id = %stream_assistant_id,
+                            call_index,
+                            tool = %name,
+                            success = outcome.ok,
+                            sources = outcome.sources.len(),
+                            elapsed_ms = tool_started_at.elapsed().as_millis() as u64,
+                            "Research tool finished"
+                        );
                         research_messages.push(ChatMessage::tool(outcome.model_content));
                         let record = tools::ToolCallRecord {
                             name,
@@ -617,6 +780,14 @@ async fn start_generation(
                                     for call in pending {
                                         let name = call.function.name;
                                         let arguments = call.function.arguments;
+                                        let tool_started_at = Instant::now();
+                                        tracing::info!(
+                                            chat_id = %chat_id,
+                                            assistant_message_id = %stream_assistant_id,
+                                            call_index,
+                                            tool = %name,
+                                            "Starting research tool"
+                                        );
                                         yield Ok(Event::default().event("tool_call").json_data(StreamToolCall { message_id: &stream_assistant_id, call_index, name: &name, arguments: arguments.to_string() }).unwrap());
                                         let requested = arguments.get("url").and_then(serde_json::Value::as_str).and_then(normalized_https_url);
                                         let outcome = if name != "fetch_page" {
@@ -629,6 +800,16 @@ async fn start_generation(
                                                 None => tools::ToolOutcome::error("fetch_page is unavailable"),
                                             }
                                         };
+                                        tracing::info!(
+                                            chat_id = %chat_id,
+                                            assistant_message_id = %stream_assistant_id,
+                                            call_index,
+                                            tool = %name,
+                                            success = outcome.ok,
+                                            sources = outcome.sources.len(),
+                                            elapsed_ms = tool_started_at.elapsed().as_millis() as u64,
+                                            "Research tool finished"
+                                        );
                                         research_messages.push(ChatMessage::tool(outcome.model_content));
                                         let record = tools::ToolCallRecord {
                                             name,
@@ -701,22 +882,48 @@ async fn start_generation(
             created_at,
         };
         if let Some(error_message) = failed {
+            tracing::warn!(
+                chat_id = %chat_id,
+                assistant_message_id = %stream_assistant_id,
+                elapsed_ms = generation_started_at.elapsed().as_millis() as u64,
+                error = %error_message,
+                "Assistant generation was interrupted"
+            );
             match persist_message(&pool, &message, "failed").await {
                 Ok(_) => {
                     yield Ok(Event::default().event("error").json_data(StreamError { code: "ollama_stream_error", message: error_message, retryable: true }).unwrap());
                 }
                 Err(error) => {
-                    tracing::error!(%error, "failed to persist interrupted generation");
+                    tracing::error!(
+                        %error,
+                        chat_id = %chat_id,
+                        assistant_message_id = %stream_assistant_id,
+                        "Failed to persist interrupted generation"
+                    );
                     yield Ok(Event::default().event("error").json_data(StreamError { code: "persistence_error", message: "The response could not be saved".into(), retryable: true }).unwrap());
                 }
             }
         } else {
             match persist_message(&pool, &message, "complete").await {
                 Ok(message) => {
+                    tracing::info!(
+                        chat_id = %chat_id,
+                        assistant_message_id = %stream_assistant_id,
+                        content_characters = message.content.chars().count(),
+                        thinking_characters = message.thinking.chars().count(),
+                        tool_calls = records.len(),
+                        elapsed_ms = generation_started_at.elapsed().as_millis() as u64,
+                        "Assistant generation completed and was saved"
+                    );
                     yield Ok(Event::default().event("message_completed").json_data(message).unwrap());
                 }
                 Err(error) => {
-                    tracing::error!(%error, "failed to persist completed generation");
+                    tracing::error!(
+                        %error,
+                        chat_id = %chat_id,
+                        assistant_message_id = %stream_assistant_id,
+                        "Failed to persist completed generation"
+                    );
                     yield Ok(Event::default().event("error").json_data(StreamError { code: "persistence_error", message: "The response could not be saved".into(), retryable: true }).unwrap());
                 }
             }

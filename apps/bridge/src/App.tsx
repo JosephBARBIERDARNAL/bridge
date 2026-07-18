@@ -624,7 +624,7 @@ export default function App() {
               multiline
               value={prompt}
               onChangeText={setPrompt}
-              placeholder={`Message ${formatModelName(model)}…`}
+              placeholder={`Message...`}
               placeholderTextColor={colors.muted}
               style={styles.input}
               onFocus={() => {

@@ -70,6 +70,23 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if self.status.is_server_error() {
+            tracing::error!(
+                status = self.status.as_u16(),
+                code = self.code,
+                retryable = self.retryable,
+                message = %self.message,
+                "Returning an API error response"
+            );
+        } else {
+            tracing::warn!(
+                status = self.status.as_u16(),
+                code = self.code,
+                retryable = self.retryable,
+                message = %self.message,
+                "Returning an API error response"
+            );
+        }
         let body = ErrorBody {
             code: self.code,
             message: &self.message,

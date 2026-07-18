@@ -12,12 +12,21 @@ async fn main() -> Result<()> {
         )
         .init();
     let config = Config::from_env()?;
+    tracing::info!(
+        address = %config.bind,
+        database = %config.database_path.display(),
+        ollama = %format_args!("{}:{}", config.ollama_host, config.ollama_port),
+        model = %config.model,
+        tool_timeout_seconds = config.tools.timeout.as_secs(),
+        "Starting Bridge gateway"
+    );
     let listener = TcpListener::bind(config.bind).await?;
     let state = AppState::connect(&config).await?;
-    tracing::info!(address = %config.bind, model = %config.model, "Bridge gateway ready");
+    tracing::info!(address = %config.bind, "Bridge gateway is ready to accept requests");
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown())
         .await?;
+    tracing::info!("Bridge gateway stopped cleanly");
     Ok(())
 }
 
@@ -36,5 +45,8 @@ async fn shutdown() {
     };
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
-    tokio::select! { _ = ctrl_c => {}, _ = terminate => {} }
+    tokio::select! {
+        _ = ctrl_c => tracing::info!(signal = "SIGINT", "Shutdown requested"),
+        _ = terminate => tracing::info!(signal = "SIGTERM", "Shutdown requested"),
+    }
 }

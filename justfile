@@ -60,9 +60,17 @@ mac-uninstall:
 status:
     ./scripts/status.sh
 
-# Follow the launchd gateway logs.
-logs:
-    tail -f "${HOME}/Library/Logs/Bridge/gateway.log" "${HOME}/Library/Logs/Bridge/gateway.error.log"
+# Show the last N launchd gateway log events, then follow new events.
+[positional-arguments]
+logs count="10":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    count="$1"
+    if [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Log count must be a positive integer (received: $count)." >&2
+        exit 2
+    fi
+    tail -n "$count" -F "${HOME}/Library/Logs/Bridge/gateway.log" "${HOME}/Library/Logs/Bridge/gateway.error.log"
 
 # Remove reproducible build output while preserving credentials and databases.
 clean:
