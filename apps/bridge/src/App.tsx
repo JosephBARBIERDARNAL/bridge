@@ -45,7 +45,7 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(systemLight);
   const colors = darkMode ? dark : light;
   const topInset =
-    Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 60) : 0;
+    Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 30) : 0;
   const styles = useMemo(
     () => makeStyles(colors, topInset),
     [colors, topInset],
@@ -852,6 +852,7 @@ function makeStyles(c: typeof light, topInset: number) {
     backdropPressable: { flex: 1 },
     brandRow: {
       height: 52,
+      marginTop: 30,
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
