@@ -5,8 +5,6 @@ Bridge is a private Android chat client for open weight models running through O
 > [!NOTE]
 > Bridge only work with Android + MacOS.
 
-<img src="app.jpg" width="140">
-
 <br>
 
 ## How it works

@@ -9,7 +9,7 @@ Bridge is a Bun and Rust monorepo for a private Android chat client.
 - `crates/gateway/` is the Axum gateway, SQLite persistence layer, and Ollama integration. Database migrations live in `crates/gateway/migrations/`.
 - `crates/android-core/` provides the Rust networking core exported to Android through UniFFI.
 - `scripts/` contains development, installation, status, and packaging helpers.
-- Root `logo.png` and Android `res/` directories contain visual assets.
+- Android `res/` directories contain visual assets.
 
 ## Build, Test, and Development Commands
 
