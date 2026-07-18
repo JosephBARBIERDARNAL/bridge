@@ -22,6 +22,8 @@ pub struct Message {
     pub content: String,
     #[serde(default)]
     pub thinking: String,
+    #[serde(default)]
+    pub tool_calls: String,
     pub status: String,
     pub created_at: String,
 }
@@ -80,6 +82,20 @@ pub trait MessageStreamListener: Send + Sync {
     fn on_started(&self, user_message_id: String, assistant_message_id: String);
     fn on_thinking_delta(&self, assistant_message_id: String, text: String);
     fn on_delta(&self, assistant_message_id: String, text: String);
+    fn on_tool_call(
+        &self,
+        assistant_message_id: String,
+        call_index: u32,
+        name: String,
+        arguments_json: String,
+    );
+    fn on_tool_result(
+        &self,
+        assistant_message_id: String,
+        call_index: u32,
+        name: String,
+        record_json: String,
+    );
     fn on_completed(&self, message: Message);
     fn on_error(&self, error: StreamFailure);
 }
@@ -121,9 +137,31 @@ struct DeltaEvent {
     text: String,
 }
 
+#[derive(Deserialize)]
+struct ToolCallEvent {
+    message_id: String,
+    call_index: u32,
+    name: String,
+    arguments: String,
+}
+
+#[derive(Deserialize)]
+struct ToolResultEvent {
+    message_id: String,
+    call_index: u32,
+    name: String,
+    record: String,
+}
+
 #[derive(Serialize)]
 struct MessageInput<'a> {
     content: &'a str,
+    web_search: bool,
+}
+
+#[derive(Serialize)]
+struct RetryInput {
+    web_search: bool,
 }
 
 #[derive(Serialize)]
@@ -241,24 +279,29 @@ impl BridgeClient {
         &self,
         chat_id: String,
         content: String,
+        web_search: bool,
         listener: Box<dyn MessageStreamListener>,
     ) -> Arc<RequestHandle> {
-        self.spawn_stream(
-            format!("v1/chats/{chat_id}/messages"),
-            Some(content),
-            listener,
-        )
+        let body = serde_json::to_value(MessageInput {
+            content: &content,
+            web_search,
+        })
+        .expect("message input serializes");
+        self.spawn_stream(format!("v1/chats/{chat_id}/messages"), Some(body), listener)
     }
 
     pub fn retry_message(
         &self,
         chat_id: String,
         user_message_id: String,
+        web_search: bool,
         listener: Box<dyn MessageStreamListener>,
     ) -> Arc<RequestHandle> {
+        let body =
+            serde_json::to_value(RetryInput { web_search }).expect("retry input serializes");
         self.spawn_stream(
             format!("v1/chats/{chat_id}/messages/{user_message_id}/retry"),
-            None,
+            Some(body),
             listener,
         )
     }
@@ -266,7 +309,7 @@ impl BridgeClient {
     fn spawn_stream(
         &self,
         path: String,
-        content: Option<String>,
+        body: Option<serde_json::Value>,
         listener: Box<dyn MessageStreamListener>,
     ) -> Arc<RequestHandle> {
         let http = self.http.clone();
@@ -276,7 +319,7 @@ impl BridgeClient {
             .join(&path)
             .expect("validated relative API path");
         let task = self.runtime.spawn(async move {
-            if let Err(error) = stream_request(http, token, url, content, listener.as_ref()).await {
+            if let Err(error) = stream_request(http, token, url, body, listener.as_ref()).await {
                 listener.on_error(StreamFailure {
                     code: "request_failed".into(),
                     message: error.to_string(),
@@ -326,15 +369,15 @@ async fn stream_request(
     http: reqwest::Client,
     token: String,
     url: Url,
-    content: Option<String>,
+    body: Option<serde_json::Value>,
     listener: &dyn MessageStreamListener,
 ) -> Result<(), BridgeError> {
     let mut request = http
         .post(url)
         .bearer_auth(token)
         .header("accept", "text/event-stream");
-    if let Some(content) = content.as_deref() {
-        request = request.json(&MessageInput { content });
+    if let Some(body) = &body {
+        request = request.json(body);
     }
     let response = request.send().await.map_err(map_reqwest)?;
     if !response.status().is_success() {
@@ -387,6 +430,16 @@ fn dispatch_sse(frame: &str, listener: &dyn MessageStreamListener) -> Result<(),
             let value: DeltaEvent =
                 serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
             listener.on_thinking_delta(value.message_id, value.text);
+        }
+        "tool_call" => {
+            let value: ToolCallEvent =
+                serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
+            listener.on_tool_call(value.message_id, value.call_index, value.name, value.arguments);
+        }
+        "tool_result" => {
+            let value: ToolResultEvent =
+                serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
+            listener.on_tool_result(value.message_id, value.call_index, value.name, value.record);
         }
         "message_completed" => {
             let value: Message =
@@ -443,6 +496,8 @@ mod tests {
     #[derive(Default)]
     struct RecordingListener {
         thinking: Mutex<Vec<(String, String)>>,
+        tool_calls: Mutex<Vec<(String, u32, String, String)>>,
+        tool_results: Mutex<Vec<(String, u32, String, String)>>,
     }
 
     impl MessageStreamListener for RecordingListener {
@@ -456,6 +511,36 @@ mod tests {
         }
 
         fn on_delta(&self, _assistant_message_id: String, _text: String) {}
+
+        fn on_tool_call(
+            &self,
+            assistant_message_id: String,
+            call_index: u32,
+            name: String,
+            arguments_json: String,
+        ) {
+            self.tool_calls.lock().unwrap().push((
+                assistant_message_id,
+                call_index,
+                name,
+                arguments_json,
+            ));
+        }
+
+        fn on_tool_result(
+            &self,
+            assistant_message_id: String,
+            call_index: u32,
+            name: String,
+            record_json: String,
+        ) {
+            self.tool_results.lock().unwrap().push((
+                assistant_message_id,
+                call_index,
+                name,
+                record_json,
+            ));
+        }
 
         fn on_completed(&self, _message: Message) {}
 
@@ -515,6 +600,7 @@ mod tests {
         assert_eq!(detail.messages.len(), 1);
         assert_eq!(detail.messages[0].content, "Hello");
         assert!(detail.messages[0].thinking.is_empty());
+        assert!(detail.messages[0].tool_calls.is_empty());
     }
 
     #[test]
@@ -529,6 +615,46 @@ mod tests {
         assert_eq!(
             *listener.thinking.lock().unwrap(),
             vec![("assistant-1".into(), "Considering".into())]
+        );
+    }
+
+    #[test]
+    fn dispatches_tool_calls() {
+        let listener = RecordingListener::default();
+        dispatch_sse(
+            "event: tool_call\ndata: {\"message_id\":\"assistant-1\",\"call_index\":0,\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"rust\\\"}\"}",
+            &listener,
+        )
+        .unwrap();
+
+        assert_eq!(
+            *listener.tool_calls.lock().unwrap(),
+            vec![(
+                "assistant-1".into(),
+                0,
+                "web_search".into(),
+                "{\"query\":\"rust\"}".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn dispatches_tool_results() {
+        let listener = RecordingListener::default();
+        dispatch_sse(
+            "event: tool_result\ndata: {\"message_id\":\"assistant-1\",\"call_index\":1,\"name\":\"fetch_page\",\"record\":\"{\\\"status\\\":\\\"ok\\\"}\"}",
+            &listener,
+        )
+        .unwrap();
+
+        assert_eq!(
+            *listener.tool_results.lock().unwrap(),
+            vec![(
+                "assistant-1".into(),
+                1,
+                "fetch_page".into(),
+                "{\"status\":\"ok\"}".into()
+            )]
         );
     }
 }
