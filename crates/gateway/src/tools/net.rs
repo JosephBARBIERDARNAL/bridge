@@ -122,8 +122,8 @@ impl SafeFetcher {
 
 pub fn validate_url(raw: &str) -> Result<Url> {
     let url = Url::parse(raw.trim()).with_context(|| format!("invalid URL '{raw}'"))?;
-    if !matches!(url.scheme(), "http" | "https") {
-        bail!("only http and https URLs are allowed");
+    if url.scheme() != "https" {
+        bail!("only https URLs are allowed");
     }
     if !url.username().is_empty() || url.password().is_some() {
         bail!("URLs with embedded credentials are not allowed");
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn validates_url_scheme_and_shape() {
         assert!(validate_url("https://example.com/page").is_ok());
-        assert!(validate_url("http://example.com").is_ok());
+        assert!(validate_url("http://example.com").is_err());
         assert!(validate_url("file:///etc/passwd").is_err());
         assert!(validate_url("ftp://example.com").is_err());
         assert!(validate_url("https://user:pass@example.com").is_err());
@@ -259,7 +259,7 @@ mod tests {
             let error = fetcher.fetch(url).await.unwrap_err();
             let message = error.to_string();
             assert!(
-                message.contains("private network") || message.contains("allowed"),
+                message.contains("private network") || message.contains("https"),
                 "{url} should be blocked, got: {message}"
             );
         }

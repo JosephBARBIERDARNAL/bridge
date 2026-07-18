@@ -1,10 +1,10 @@
 import { useMemo } from "react";
-import { Linking } from "react-native";
 import {
   EnrichedMarkdownText,
   type MarkdownStyle,
 } from "react-native-enriched-markdown";
 import { sanitizeMarkdownImages } from "./chatUi";
+import { openHttpsUrl } from "./links";
 import type { light } from "./theme";
 
 type Props = {
@@ -23,7 +23,7 @@ export default function MarkdownText({ content, colors }: Props) {
       markdownStyle={style}
       md4cFlags={{ latexMath: false }}
       selectable
-      onLinkPress={({ url }) => void Linking.openURL(url)}
+      onLinkPress={({ url }) => void openHttpsUrl(url)}
     />
   );
 }

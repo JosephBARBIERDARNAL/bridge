@@ -75,18 +75,29 @@ export class WebGatewayClient implements BridgeClient {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        while (true) {
+        let terminal = false;
+        while (!terminal) {
           const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder
-            .decode(value, { stream: true })
-            .replace(/\r\n/g, "\n");
+          if (done) {
+            buffer += decoder.decode();
+          } else {
+            buffer += decoder.decode(value, { stream: true });
+          }
+          buffer = buffer.replace(/\r\n/g, "\n");
           let boundary: number;
           while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-            this.dispatch(buffer.slice(0, boundary), listener);
+            terminal = this.dispatch(buffer.slice(0, boundary), listener);
             buffer = buffer.slice(boundary + 2);
+            if (terminal) break;
+          }
+          if (done) {
+            if (!terminal && buffer.trim())
+              terminal = this.dispatch(buffer, listener);
+            break;
           }
         }
+        if (!terminal)
+          throw new Error("The response stream ended unexpectedly");
       } catch (error) {
         if (!controller.signal.aborted)
           listener.onError({
@@ -102,7 +113,7 @@ export class WebGatewayClient implements BridgeClient {
   private dispatch(frame: string, listener: StreamListener) {
     const event = frame.match(/^event:\s*(.+)$/m)?.[1];
     const data = frame.match(/^data:\s*(.+)$/m)?.[1];
-    if (!event || !data) return;
+    if (!event || !data) return false;
     const value = JSON.parse(data);
     if (event === "message_started")
       listener.onStarted(value.user_message_id, value.assistant_message_id);
@@ -123,8 +134,15 @@ export class WebGatewayClient implements BridgeClient {
         value.name,
         value.record,
       );
-    if (event === "message_completed") listener.onCompleted(value as Message);
-    if (event === "error") listener.onError(value);
+    if (event === "message_completed") {
+      listener.onCompleted(value as Message);
+      return true;
+    }
+    if (event === "error") {
+      listener.onError(value);
+      return true;
+    }
+    return false;
   }
 
   private async request(method: string, path: string, body?: unknown) {

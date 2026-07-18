@@ -39,6 +39,8 @@ The app works exactly when it can reach your Mac: on the same network, or from a
 
 Bridge keeps inference and application data on hardware you control. Ollama runs the model on the Mac, chat history is stored in SQLite on the Mac, and the Android app only renders the UI and exchanges messages with the gateway.
 
+When Web is enabled, only the current user message is available to the search planner. Bridge then permits page fetches only for HTTPS URLs returned by that search and disables every tool before the final answer. Earlier chat history is provided only to the tool-free final response. Outbound links in the app are likewise restricted to HTTPS.
+
 The gateway listens on `127.0.0.1:8787` by default, so it is not directly reachable from the Mac's LAN or the public internet. Tailscale Serve exposes that loopback service only inside your private tailnet through a stable `https://<machine>.<tailnet>.ts.net` address.
 
 Reaching the gateway requires two independent things:

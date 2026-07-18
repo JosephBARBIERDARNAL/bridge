@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx_core::{from_row::FromRow, row::Row};
+use sqlx_sqlite::SqliteRow;
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatSummary {
     pub id: String,
     pub title: String,
@@ -9,7 +10,18 @@ pub struct ChatSummary {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+impl<'r> FromRow<'r, SqliteRow> for ChatSummary {
+    fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx_core::Error> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            title: row.try_get("title")?,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Message {
     pub id: String,
     pub chat_id: String,
@@ -20,6 +32,21 @@ pub struct Message {
     pub tool_calls: String,
     pub status: String,
     pub created_at: String,
+}
+
+impl<'r> FromRow<'r, SqliteRow> for Message {
+    fn from_row(row: &'r SqliteRow) -> Result<Self, sqlx_core::Error> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            chat_id: row.try_get("chat_id")?,
+            role: row.try_get("role")?,
+            content: row.try_get("content")?,
+            thinking: row.try_get("thinking")?,
+            tool_calls: row.try_get("tool_calls")?,
+            status: row.try_get("status")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]

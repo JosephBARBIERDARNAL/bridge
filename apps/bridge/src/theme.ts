@@ -1,3 +1,5 @@
+export const DEFAULT_DARK_MODE = false;
+
 export const light = {
   background: "#f7f7f5",
   surface: "#ffffff",

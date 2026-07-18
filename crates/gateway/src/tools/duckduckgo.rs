@@ -5,7 +5,7 @@ use scraper::{Html, Selector};
 use serde::Serialize;
 use url::Url;
 
-use super::net::SafeFetcher;
+use super::net::{SafeFetcher, validate_url};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
@@ -92,13 +92,14 @@ fn decode_href(href: &str) -> Option<String> {
         href.to_owned()
     };
     let url = Url::parse(&absolute).ok()?;
-    if url.path().trim_end_matches('/') == "/l" {
+    let decoded = if url.path().trim_end_matches('/') == "/l" {
         url.query_pairs()
             .find(|(key, _)| key == "uddg")
             .map(|(_, value)| value.into_owned())
     } else {
         Some(absolute)
-    }
+    }?;
+    validate_url(&decoded).ok().map(|url| url.to_string())
 }
 
 fn collapse(text: &str) -> String {

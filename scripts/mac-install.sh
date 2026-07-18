@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="$HOME/Library/Application Support/Bridge"
@@ -9,11 +10,13 @@ TOKEN="$DATA/token"
 PLIST="$HOME/Library/LaunchAgents/app.bridge.gateway.plist"
 
 mkdir -p "$BIN" "$LOGS" "$(dirname "$PLIST")"
+chmod 700 "$DATA" "$BIN" "$LOGS"
 if [[ ! -f "$TOKEN" ]]; then
-  umask 077
   openssl rand -hex 32 > "$TOKEN"
 fi
 chmod 600 "$TOKEN"
+find "$DATA" -maxdepth 1 -type f \( -name 'bridge.db' -o -name 'bridge.db-*' \) -exec chmod 600 {} +
+find "$LOGS" -maxdepth 1 -type f -exec chmod 600 {} +
 
 cd "$ROOT"
 cargo build -p bridge-gateway --release
@@ -30,6 +33,7 @@ cat > "$PLIST" <<PLIST
     <key>BRIDGE_MODEL</key><string>gemma4:26b</string>
     <key>RUST_LOG</key><string>bridge_gateway=info</string>
   </dict>
+  <key>Umask</key><integer>63</integer>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>$LOGS/gateway.log</string>
   <key>StandardErrorPath</key><string>$LOGS/gateway.error.log</string>
@@ -47,4 +51,3 @@ fi
 
 echo "Bridge gateway installed. API token: $TOKEN"
 echo "Run 'just status' to verify the installation."
-

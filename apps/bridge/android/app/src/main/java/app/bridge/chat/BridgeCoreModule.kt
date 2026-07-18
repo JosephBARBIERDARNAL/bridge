@@ -21,13 +21,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 class BridgeCoreModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val store = CredentialStore(context)
-    private val requests = ConcurrentHashMap<String, RequestHandle>()
+    private val requests = ConcurrentHashMap<String, ManagedRequest>()
     @Volatile private var client: BridgeClient? = store.load()?.let { runCatching { BridgeClient(it.baseUrl, it.token) }.getOrNull() }
 
     override fun getName(): String = "BridgeCore"
@@ -49,39 +48,46 @@ class BridgeCoreModule(private val context: ReactApplicationContext) : ReactCont
     @ReactMethod fun deleteChat(id: String, promise: Promise) = launch(promise) { requireClient().deleteChat(id); null }
 
     @ReactMethod
-    fun sendMessage(chatId: String, content: String, webSearch: Boolean, promise: Promise) = start(promise) { listener ->
+    fun sendMessage(requestId: String, chatId: String, content: String, webSearch: Boolean, promise: Promise) = start(requestId, promise) { listener ->
         requireClient().sendMessage(chatId, content, webSearch, listener)
     }
 
     @ReactMethod
-    fun retryMessage(chatId: String, messageId: String, webSearch: Boolean, promise: Promise) = start(promise) { listener ->
+    fun retryMessage(requestId: String, chatId: String, messageId: String, webSearch: Boolean, promise: Promise) = start(requestId, promise) { listener ->
         requireClient().retryMessage(chatId, messageId, webSearch, listener)
     }
 
     @ReactMethod
     fun cancel(requestId: String, promise: Promise) = launch(promise) {
-        requests.remove(requestId)?.let { it.cancel(); it.close() }
+        requests.remove(requestId)?.finish(cancel = true)
         null
     }
 
     @ReactMethod fun addListener(eventName: String) = Unit
     @ReactMethod fun removeListeners(count: Double) = Unit
 
-    private fun start(promise: Promise, operation: (MessageStreamListener) -> RequestHandle) {
+    private fun start(requestId: String, promise: Promise, operation: (MessageStreamListener) -> RequestHandle) {
+        val request = ManagedRequest()
+        if (requests.putIfAbsent(requestId, request) != null) {
+            promise.reject("bridge_error", "Duplicate stream request ID")
+            return
+        }
         try {
-            val requestId = UUID.randomUUID().toString()
             val listener = object : MessageStreamListener {
                 override fun onStarted(userMessageId: String, assistantMessageId: String) = emit(requestId, "started", Arguments.createMap().apply { putString("userMessageId", userMessageId); putString("assistantMessageId", assistantMessageId) })
                 override fun onThinkingDelta(assistantMessageId: String, text: String) = emit(requestId, "thinking_delta", Arguments.createMap().apply { putString("assistantMessageId", assistantMessageId); putString("text", text) })
                 override fun onDelta(assistantMessageId: String, text: String) = emit(requestId, "delta", Arguments.createMap().apply { putString("assistantMessageId", assistantMessageId); putString("text", text) })
                 override fun onToolCall(assistantMessageId: String, callIndex: UInt, name: String, argumentsJson: String) = emit(requestId, "tool_call", Arguments.createMap().apply { putString("assistantMessageId", assistantMessageId); putInt("callIndex", callIndex.toInt()); putString("name", name); putString("argumentsJson", argumentsJson) })
                 override fun onToolResult(assistantMessageId: String, callIndex: UInt, name: String, recordJson: String) = emit(requestId, "tool_result", Arguments.createMap().apply { putString("assistantMessageId", assistantMessageId); putInt("callIndex", callIndex.toInt()); putString("name", name); putString("recordJson", recordJson) })
-                override fun onCompleted(message: Message) { emit(requestId, "completed", Arguments.createMap().apply { putMap("message", messageMap(message)) }); requests.remove(requestId)?.close() }
-                override fun onError(error: StreamFailure) { emit(requestId, "error", Arguments.createMap().apply { putMap("error", errorMap(error)) }); requests.remove(requestId)?.close() }
+                override fun onCompleted(message: Message) { emit(requestId, "completed", Arguments.createMap().apply { putMap("message", messageMap(message)) }); requests.remove(requestId)?.finish(cancel = false) }
+                override fun onError(error: StreamFailure) { emit(requestId, "error", Arguments.createMap().apply { putMap("error", errorMap(error)) }); requests.remove(requestId)?.finish(cancel = false) }
             }
-            requests[requestId] = operation(listener)
-            promise.resolve(requestId)
-        } catch (error: Throwable) { promise.reject("bridge_error", error.message, error) }
+            request.attach(operation(listener))
+            promise.resolve(null)
+        } catch (error: Throwable) {
+            requests.remove(requestId)?.finish(cancel = true)
+            promise.reject("bridge_error", error.message, error)
+        }
     }
 
     private fun emit(requestId: String, type: String, data: WritableMap) {
@@ -93,7 +99,7 @@ class BridgeCoreModule(private val context: ReactApplicationContext) : ReactCont
     private fun launch(promise: Promise, block: () -> Any?) { scope.launch { runCatching(block).onSuccess(promise::resolve).onFailure { promise.reject("bridge_error", it.message, it) } } }
 
     override fun invalidate() {
-        requests.values.forEach { it.cancel(); it.close() }; requests.clear(); client?.close(); scope.cancel(); super.invalidate()
+        requests.values.forEach { it.finish(cancel = true) }; requests.clear(); client?.close(); scope.cancel(); super.invalidate()
     }
 
     private fun chatMap(value: ChatSummary) = Arguments.createMap().apply { putString("id", value.id); putString("title", value.title); putString("created_at", value.createdAt); putString("updated_at", value.updatedAt) }
@@ -101,4 +107,25 @@ class BridgeCoreModule(private val context: ReactApplicationContext) : ReactCont
     private fun detailMap(value: ChatDetail) = Arguments.createMap().apply { putMap("chat", chatMap(value.chat)); putArray("messages", Arguments.createArray().apply { value.messages.forEach { pushMap(messageMap(it)) } }) }
     private fun healthMap(value: HealthStatus) = Arguments.createMap().apply { putString("gateway", value.gateway); putString("database", value.database); putString("ollama", value.ollama); putString("model", value.model); putBoolean("model_available", value.modelAvailable) }
     private fun errorMap(value: StreamFailure) = Arguments.createMap().apply { putString("code", value.code); putString("message", value.message); putBoolean("retryable", value.retryable) }
+}
+
+private class ManagedRequest {
+    private var handle: RequestHandle? = null
+    private var finished = false
+
+    @Synchronized
+    fun attach(value: RequestHandle) {
+        if (finished) value.close() else handle = value
+    }
+
+    @Synchronized
+    fun finish(cancel: Boolean) {
+        if (finished) return
+        finished = true
+        handle?.let {
+            if (cancel) it.cancel()
+            it.close()
+        }
+        handle = null
+    }
 }

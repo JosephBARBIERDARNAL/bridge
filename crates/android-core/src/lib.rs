@@ -384,23 +384,69 @@ async fn stream_request(
     }
 
     let mut bytes = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut decoder = SseDecoder::default();
     while let Some(chunk) = bytes.next().await {
         let chunk = chunk.map_err(map_reqwest)?;
-        buffer.push_str(std::str::from_utf8(&chunk).map_err(|_| BridgeError::InvalidResponse)?);
-        while let Some(boundary) = buffer.find("\n\n") {
-            let frame = buffer[..boundary].to_owned();
-            buffer.drain(..boundary + 2);
-            dispatch_sse(&frame, listener)?;
+        decoder.push(&chunk, listener)?;
+        if decoder.terminal {
+            return Ok(());
         }
     }
-    if !buffer.trim().is_empty() {
-        dispatch_sse(&buffer, listener)?;
-    }
-    Ok(())
+    decoder.finish(listener)
 }
 
-fn dispatch_sse(frame: &str, listener: &dyn MessageStreamListener) -> Result<(), BridgeError> {
+#[derive(Default)]
+struct SseDecoder {
+    buffer: Vec<u8>,
+    terminal: bool,
+}
+
+impl SseDecoder {
+    fn push(
+        &mut self,
+        chunk: &[u8],
+        listener: &dyn MessageStreamListener,
+    ) -> Result<(), BridgeError> {
+        self.buffer.extend_from_slice(chunk);
+        while let Some((boundary, delimiter_length)) = frame_boundary(&self.buffer) {
+            let frame = std::str::from_utf8(&self.buffer[..boundary])
+                .map_err(|_| BridgeError::InvalidResponse)?;
+            self.terminal = dispatch_sse(frame, listener)?;
+            self.buffer.drain(..boundary + delimiter_length);
+            if self.terminal {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self, listener: &dyn MessageStreamListener) -> Result<(), BridgeError> {
+        if !self.buffer.iter().all(u8::is_ascii_whitespace) {
+            let frame =
+                std::str::from_utf8(&self.buffer).map_err(|_| BridgeError::InvalidResponse)?;
+            self.terminal = dispatch_sse(frame, listener)?;
+        }
+        if self.terminal {
+            Ok(())
+        } else {
+            Err(BridgeError::InvalidResponse)
+        }
+    }
+}
+
+fn frame_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
+    let lf = buffer.windows(2).position(|value| value == b"\n\n");
+    let crlf = buffer.windows(4).position(|value| value == b"\r\n\r\n");
+    match (lf, crlf) {
+        (Some(lf), Some(crlf)) if lf <= crlf => Some((lf, 2)),
+        (Some(_), Some(crlf)) => Some((crlf, 4)),
+        (Some(lf), None) => Some((lf, 2)),
+        (None, Some(crlf)) => Some((crlf, 4)),
+        (None, None) => None,
+    }
+}
+
+fn dispatch_sse(frame: &str, listener: &dyn MessageStreamListener) -> Result<bool, BridgeError> {
     let mut event = "message";
     let mut data = String::new();
     for line in frame.lines() {
@@ -449,6 +495,7 @@ fn dispatch_sse(frame: &str, listener: &dyn MessageStreamListener) -> Result<(),
             let value: Message =
                 serde_json::from_str(&data).map_err(|_| BridgeError::InvalidResponse)?;
             listener.on_completed(value);
+            return Ok(true);
         }
         "error" => {
             let value: ApiErrorBody =
@@ -458,10 +505,11 @@ fn dispatch_sse(frame: &str, listener: &dyn MessageStreamListener) -> Result<(),
                 message: value.message,
                 retryable: value.retryable,
             });
+            return Ok(true);
         }
         _ => {}
     }
-    Ok(())
+    Ok(false)
 }
 
 fn is_loopback(url: &Url) -> bool {
@@ -500,8 +548,11 @@ mod tests {
     #[derive(Default)]
     struct RecordingListener {
         thinking: Mutex<Vec<(String, String)>>,
+        deltas: Mutex<Vec<(String, String)>>,
         tool_calls: Mutex<Vec<(String, u32, String, String)>>,
         tool_results: Mutex<Vec<(String, u32, String, String)>>,
+        completed: Mutex<Vec<Message>>,
+        errors: Mutex<Vec<StreamFailure>>,
     }
 
     impl MessageStreamListener for RecordingListener {
@@ -514,7 +565,12 @@ mod tests {
                 .push((assistant_message_id, text));
         }
 
-        fn on_delta(&self, _assistant_message_id: String, _text: String) {}
+        fn on_delta(&self, assistant_message_id: String, text: String) {
+            self.deltas
+                .lock()
+                .unwrap()
+                .push((assistant_message_id, text));
+        }
 
         fn on_tool_call(
             &self,
@@ -546,9 +602,13 @@ mod tests {
             ));
         }
 
-        fn on_completed(&self, _message: Message) {}
+        fn on_completed(&self, message: Message) {
+            self.completed.lock().unwrap().push(message);
+        }
 
-        fn on_error(&self, _error: StreamFailure) {}
+        fn on_error(&self, error: StreamFailure) {
+            self.errors.lock().unwrap().push(error);
+        }
     }
 
     const CHAT: &str = r#"
@@ -660,5 +720,57 @@ mod tests {
                 "{\"status\":\"ok\"}".into()
             )]
         );
+    }
+
+    #[test]
+    fn decodes_utf8_split_across_chunks_and_crlf_frames() {
+        let listener = RecordingListener::default();
+        let frames = concat!(
+            "event: delta\r\n",
+            "data: {\"message_id\":\"assistant-1\",\"text\":\"café 🦀\"}\r\n\r\n",
+            "event: message_completed\r\n",
+            "data: {\"id\":\"assistant-1\",\"chat_id\":\"chat-1\",\"role\":\"assistant\",\"content\":\"café 🦀\",\"thinking\":\"\",\"tool_calls\":\"\",\"status\":\"complete\",\"created_at\":\"2026-07-16T08:01:00Z\"}\r\n\r\n"
+        );
+        let mut decoder = SseDecoder::default();
+        for byte in frames.as_bytes() {
+            decoder.push(std::slice::from_ref(byte), &listener).unwrap();
+        }
+        decoder.finish(&listener).unwrap();
+
+        assert_eq!(
+            *listener.deltas.lock().unwrap(),
+            vec![("assistant-1".into(), "café 🦀".into())]
+        );
+        assert_eq!(listener.completed.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rejects_eof_without_a_terminal_event() {
+        let listener = RecordingListener::default();
+        let mut decoder = SseDecoder::default();
+        decoder
+            .push(
+                b"event: delta\ndata: {\"message_id\":\"assistant-1\",\"text\":\"partial\"}\n\n",
+                &listener,
+            )
+            .unwrap();
+        assert!(matches!(
+            decoder.finish(&listener),
+            Err(BridgeError::InvalidResponse)
+        ));
+    }
+
+    #[test]
+    fn treats_error_events_as_terminal() {
+        let listener = RecordingListener::default();
+        let mut decoder = SseDecoder::default();
+        decoder
+            .push(
+                b"event: error\ndata: {\"code\":\"persistence_error\",\"message\":\"failed\",\"retryable\":true}\n\n",
+                &listener,
+            )
+            .unwrap();
+        decoder.finish(&listener).unwrap();
+        assert_eq!(listener.errors.lock().unwrap()[0].code, "persistence_error");
     }
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODE="${1:-mock}"
@@ -19,4 +20,3 @@ if [[ "$MODE" == "real" ]]; then
 else
   bun run dev
 fi
-

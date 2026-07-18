@@ -7,6 +7,7 @@ import type {
   RequestHandle,
   StreamListener,
 } from "../types";
+import { subscribeNativeStream } from "./nativeStream";
 
 const module = NativeModules.BridgeCore;
 const emitter = new NativeEventEmitter(module);
@@ -41,7 +42,7 @@ export class NativeBridgeClient implements BridgeClient {
     listener: StreamListener,
   ) {
     return this.subscribe(
-      module.sendMessage(chatId, content, webSearch),
+      (requestId) => module.sendMessage(requestId, chatId, content, webSearch),
       listener,
     );
   }
@@ -53,49 +54,21 @@ export class NativeBridgeClient implements BridgeClient {
     listener: StreamListener,
   ) {
     return this.subscribe(
-      module.retryMessage(chatId, messageId, webSearch),
+      (requestId) =>
+        module.retryMessage(requestId, chatId, messageId, webSearch),
       listener,
     );
   }
 
   private subscribe(
-    requestIdPromise: Promise<string>,
+    start: (requestId: string) => Promise<void>,
     listener: StreamListener,
   ): RequestHandle {
-    let requestId: string | undefined;
-    const subscription = emitter.addListener("BridgeStreamEvent", (event) => {
-      if (event.requestId !== requestId) return;
-      if (event.type === "started")
-        listener.onStarted(event.userMessageId, event.assistantMessageId);
-      if (event.type === "thinking_delta")
-        listener.onThinkingDelta(event.assistantMessageId, event.text);
-      if (event.type === "delta")
-        listener.onDelta(event.assistantMessageId, event.text);
-      if (event.type === "tool_call")
-        listener.onToolCall(
-          event.assistantMessageId,
-          event.callIndex,
-          event.name,
-          event.argumentsJson,
-        );
-      if (event.type === "tool_result")
-        listener.onToolResult(
-          event.assistantMessageId,
-          event.callIndex,
-          event.name,
-          event.recordJson,
-        );
-      if (event.type === "completed") listener.onCompleted(event.message);
-      if (event.type === "error") listener.onError(event.error);
-    });
-    void requestIdPromise.then((value) => {
-      requestId = value;
-    });
-    return {
-      cancel: () => {
-        subscription.remove();
-        if (requestId) void module.cancel(requestId);
-      },
-    };
+    return subscribeNativeStream(
+      emitter,
+      start,
+      (requestId) => module.cancel(requestId),
+      listener,
+    );
   }
 }

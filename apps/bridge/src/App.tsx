@@ -3,12 +3,10 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Appearance,
   Easing,
   type GestureResponderEvent,
   Keyboard,
   KeyboardAvoidingView,
-  Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -31,6 +29,7 @@ import {
   shouldShowResponseWaiting,
 } from "./chatUi";
 import { createClient } from "./client";
+import { openHttpsUrl } from "./links";
 import {
   parseToolCalls,
   type ChatSummary,
@@ -40,13 +39,13 @@ import {
   type ToolCallRecord,
   type ToolSource,
 } from "./types";
-import { dark, light } from "./theme";
+import { dark, DEFAULT_DARK_MODE, light } from "./theme";
+import { normalizeHttpsUrl } from "./urlPolicy";
 
 const client = createClient();
 
 export default function App() {
-  const systemLight = Appearance.getColorScheme() === "light";
-  const [darkMode, setDarkMode] = useState(systemLight);
+  const [darkMode, setDarkMode] = useState(DEFAULT_DARK_MODE);
   const colors = darkMode ? dark : light;
   const topInset =
     Platform.OS === "android" ? Math.max(StatusBar.currentHeight ?? 0, 30) : 0;
@@ -851,7 +850,7 @@ function MessageView({
               <Pressable
                 key={source.url}
                 style={styles.sourceChip}
-                onPress={() => void Linking.openURL(source.url)}
+                onPress={() => void openHttpsUrl(source.url)}
               >
                 <Text numberOfLines={1} style={styles.sourceChipText}>
                   {index + 1} · {hostnameOf(source.url)}
@@ -915,7 +914,7 @@ function ToolCallView({
           ) : result.results ? (
             result.results.map((item, index) => (
               <View key={index} style={styles.toolResultRow}>
-                <Pressable onPress={() => void Linking.openURL(item.url)}>
+                <Pressable onPress={() => void openHttpsUrl(item.url)}>
                   <Text style={styles.toolResultTitle}>{item.title}</Text>
                   <Text numberOfLines={1} style={styles.toolResultUrl}>
                     {hostnameOf(item.url)}
@@ -1007,7 +1006,8 @@ function formatModelName(model: string) {
 }
 
 function hostnameOf(url: string) {
-  return url.replace(/^https?:\/\//, "").split(/[/?#]/)[0] || url;
+  const normalized = normalizeHttpsUrl(url);
+  return normalized ? new URL(normalized).hostname : url;
 }
 
 function makeStyles(c: typeof light, topInset: number) {

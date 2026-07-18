@@ -85,22 +85,35 @@ impl ToolRegistry {
         Self { tools }
     }
 
+    #[cfg(test)]
     pub fn infos(&self) -> Vec<ToolInfo> {
         self.tools
             .iter()
-            .map(|tool| ToolInfo {
-                tool_type: ToolType::Function,
-                function: ToolFunctionInfo {
-                    name: tool.name().to_owned(),
-                    description: tool.description().to_owned(),
-                    parameters: schema_from(tool.parameters()),
-                },
-            })
+            .map(|tool| tool_info(tool.as_ref()))
+            .collect()
+    }
+
+    pub fn infos_for(&self, names: &[&str]) -> Vec<ToolInfo> {
+        names
+            .iter()
+            .filter_map(|name| self.get(name))
+            .map(|tool| tool_info(tool.as_ref()))
             .collect()
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.iter().find(|tool| tool.name() == name).cloned()
+    }
+}
+
+fn tool_info(tool: &dyn Tool) -> ToolInfo {
+    ToolInfo {
+        tool_type: ToolType::Function,
+        function: ToolFunctionInfo {
+            name: tool.name().to_owned(),
+            description: tool.description().to_owned(),
+            parameters: schema_from(tool.parameters()),
+        },
     }
 }
 

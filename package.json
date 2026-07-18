@@ -2,6 +2,9 @@
   "name": "bridge-monorepo",
   "private": true,
   "packageManager": "bun@1.3.7",
+  "overrides": {
+    "fast-xml-parser": "5.10.0"
+  },
   "workspaces": [
     "apps/*"
   ],

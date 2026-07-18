@@ -18,7 +18,6 @@ pub struct ToolConfig {
     pub timeout: Duration,
     pub fetch_max_bytes: usize,
     pub page_max_chars: usize,
-    pub max_rounds: u32,
     pub search_max_results: usize,
 }
 
@@ -28,7 +27,6 @@ impl Default for ToolConfig {
             timeout: Duration::from_secs(15),
             fetch_max_bytes: 1_000_000,
             page_max_chars: 6_000,
-            max_rounds: 8,
             search_max_results: 5,
         }
     }
@@ -44,7 +42,6 @@ impl ToolConfig {
             )?),
             fetch_max_bytes: env_parse("BRIDGE_TOOL_FETCH_MAX_BYTES", default.fetch_max_bytes)?,
             page_max_chars: env_parse("BRIDGE_TOOL_PAGE_MAX_CHARS", default.page_max_chars)?,
-            max_rounds: env_parse("BRIDGE_TOOL_MAX_ROUNDS", default.max_rounds)?,
             search_max_results: env_parse("BRIDGE_SEARCH_MAX_RESULTS", default.search_max_results)?,
         })
     }

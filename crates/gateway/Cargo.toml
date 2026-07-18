@@ -17,7 +17,8 @@ schemars.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
+sqlx-core.workspace = true
+sqlx-sqlite.workspace = true
 subtle = "2.6"
 tokio.workspace = true
 url.workspace = true
@@ -29,4 +30,3 @@ uuid.workspace = true
 http-body-util = "0.1"
 tempfile = "3.20"
 tower = { version = "0.5", features = ["util"] }
-
