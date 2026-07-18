@@ -34,12 +34,28 @@ export class NativeBridgeClient implements BridgeClient {
     return module.deleteChat(id);
   }
 
-  sendMessage(chatId: string, content: string, listener: StreamListener) {
-    return this.subscribe(module.sendMessage(chatId, content), listener);
+  sendMessage(
+    chatId: string,
+    content: string,
+    webSearch: boolean,
+    listener: StreamListener,
+  ) {
+    return this.subscribe(
+      module.sendMessage(chatId, content, webSearch),
+      listener,
+    );
   }
 
-  retryMessage(chatId: string, messageId: string, listener: StreamListener) {
-    return this.subscribe(module.retryMessage(chatId, messageId), listener);
+  retryMessage(
+    chatId: string,
+    messageId: string,
+    webSearch: boolean,
+    listener: StreamListener,
+  ) {
+    return this.subscribe(
+      module.retryMessage(chatId, messageId, webSearch),
+      listener,
+    );
   }
 
   private subscribe(
@@ -55,6 +71,20 @@ export class NativeBridgeClient implements BridgeClient {
         listener.onThinkingDelta(event.assistantMessageId, event.text);
       if (event.type === "delta")
         listener.onDelta(event.assistantMessageId, event.text);
+      if (event.type === "tool_call")
+        listener.onToolCall(
+          event.assistantMessageId,
+          event.callIndex,
+          event.name,
+          event.argumentsJson,
+        );
+      if (event.type === "tool_result")
+        listener.onToolResult(
+          event.assistantMessageId,
+          event.callIndex,
+          event.name,
+          event.recordJson,
+        );
       if (event.type === "completed") listener.onCompleted(event.message);
       if (event.type === "error") listener.onError(event.error);
     });

@@ -11,9 +11,30 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   thinking: string;
+  tool_calls: string;
   status: "complete" | "streaming" | "failed";
   created_at: string;
 };
+
+export type ToolSource = { title: string; url: string };
+
+export type ToolCallRecord = {
+  name: string;
+  arguments: Record<string, unknown>;
+  status: "running" | "ok" | "error";
+  result?: unknown;
+  sources?: ToolSource[];
+};
+
+export function parseToolCalls(text: string | undefined): ToolCallRecord[] {
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export type ChatDetail = { chat: ChatSummary; messages: Message[] };
 export type HealthStatus = {
@@ -33,6 +54,18 @@ export type StreamListener = {
   onStarted(userMessageId: string, assistantMessageId: string): void;
   onThinkingDelta(assistantMessageId: string, text: string): void;
   onDelta(assistantMessageId: string, text: string): void;
+  onToolCall(
+    assistantMessageId: string,
+    callIndex: number,
+    name: string,
+    argumentsJson: string,
+  ): void;
+  onToolResult(
+    assistantMessageId: string,
+    callIndex: number,
+    name: string,
+    recordJson: string,
+  ): void;
   onCompleted(message: Message): void;
   onError(error: StreamFailure): void;
 };
@@ -49,11 +82,13 @@ export interface BridgeClient {
   sendMessage(
     chatId: string,
     content: string,
+    webSearch: boolean,
     listener: StreamListener,
   ): RequestHandle;
   retryMessage(
     chatId: string,
     userMessageId: string,
+    webSearch: boolean,
     listener: StreamListener,
   ): RequestHandle;
 }

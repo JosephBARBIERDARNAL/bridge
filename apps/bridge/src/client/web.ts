@@ -30,18 +30,28 @@ export class WebGatewayClient implements BridgeClient {
     await this.request("DELETE", `/chats/${id}`);
   }
 
-  sendMessage(chatId: string, content: string, listener: StreamListener) {
-    return this.stream(`/chats/${chatId}/messages`, { content }, listener);
+  sendMessage(
+    chatId: string,
+    content: string,
+    webSearch: boolean,
+    listener: StreamListener,
+  ) {
+    return this.stream(
+      `/chats/${chatId}/messages`,
+      { content, web_search: webSearch },
+      listener,
+    );
   }
 
   retryMessage(
     chatId: string,
     userMessageId: string,
+    webSearch: boolean,
     listener: StreamListener,
   ) {
     return this.stream(
       `/chats/${chatId}/messages/${userMessageId}/retry`,
-      undefined,
+      { web_search: webSearch },
       listener,
     );
   }
@@ -99,6 +109,20 @@ export class WebGatewayClient implements BridgeClient {
     if (event === "thinking_delta")
       listener.onThinkingDelta(value.message_id, value.text);
     if (event === "delta") listener.onDelta(value.message_id, value.text);
+    if (event === "tool_call")
+      listener.onToolCall(
+        value.message_id,
+        value.call_index,
+        value.name,
+        value.arguments,
+      );
+    if (event === "tool_result")
+      listener.onToolResult(
+        value.message_id,
+        value.call_index,
+        value.name,
+        value.record,
+      );
     if (event === "message_completed") listener.onCompleted(value as Message);
     if (event === "error") listener.onError(value);
   }
