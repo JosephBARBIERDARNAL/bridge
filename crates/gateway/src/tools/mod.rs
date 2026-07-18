@@ -17,6 +17,17 @@ pub struct Source {
     pub url: String,
 }
 
+/// One executed tool call, persisted on the assistant message and streamed
+/// to the client as the `tool_result` payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallRecord {
+    pub name: String,
+    pub arguments: Value,
+    pub status: String,
+    pub result: Value,
+    pub sources: Vec<Source>,
+}
+
 pub struct ToolOutcome {
     pub ok: bool,
     /// Text handed back to the model as the tool message (errors included,

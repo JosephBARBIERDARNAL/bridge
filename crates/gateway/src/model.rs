@@ -16,6 +16,8 @@ pub struct Message {
     pub role: String,
     pub content: String,
     pub thinking: String,
+    /// JSON array of tool-call records, or the empty string when none.
+    pub tool_calls: String,
     pub status: String,
     pub created_at: String,
 }
@@ -34,6 +36,14 @@ pub struct UpdateChat {
 #[derive(Debug, Deserialize)]
 pub struct SendMessage {
     pub content: String,
+    #[serde(default)]
+    pub web_search: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RetryInput {
+    #[serde(default)]
+    pub web_search: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +65,24 @@ pub struct StreamStarted {
 pub struct StreamDelta<'a> {
     pub message_id: &'a str,
     pub text: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StreamToolCall<'a> {
+    pub message_id: &'a str,
+    pub call_index: u32,
+    pub name: &'a str,
+    /// Tool arguments as a JSON string.
+    pub arguments: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StreamToolResult<'a> {
+    pub message_id: &'a str,
+    pub call_index: u32,
+    pub name: &'a str,
+    /// Full tool-call record as a JSON string.
+    pub record: String,
 }
 
 #[derive(Debug, Serialize)]
