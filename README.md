@@ -1,11 +1,9 @@
 # Bridge
 
-Bridge is a private Android chat client for open weight models running through Ollama on your Mac. The Mac hosts a Rust gateway and SQLite history; the Android app uses a Rust networking core through UniFFI; the UI is React Native.
+Bridge is a private Android chat client for open-weight models. It connects over HTTPS and server-sent events to the separately deployed [Mai backend](https://github.com/JosephBARBIERDARNAL/mai), which stores chat history and uses a shared Ollama daemon on your Mac.
 
 > [!NOTE]
-> Bridge only work with Android + MacOS.
-
-<br>
+> Bridge currently supports an Android client with a macOS-hosted Mai backend.
 
 ## How it works
 
@@ -15,117 +13,93 @@ flowchart LR
         UI[React Native UI] --> Kotlin[Kotlin bridge]
         Kotlin --> Core[Rust core via UniFFI]
     end
-    subgraph Private network
-        Tailnet[Tailscale]
-    end
-    subgraph Mac
-        Serve[Tailscale Serve] --> Gateway[Rust gateway]
-        Gateway --> DB[(SQLite history)]
-        Gateway --> Ollama[Ollama]
-    end
-    Core -->|HTTPS + SSE| Tailnet
-    Tailnet --> Serve
+    Core -->|HTTPS + SSE| Tailnet[Tailscale]
+    Tailnet --> Mai[Mai backend on Mac]
+    Mai --> DB[(SQLite history)]
+    Mai --> Ollama[Shared Ollama daemon]
 ```
 
-- The Mac does the heavy lifting (e.g., server-side logic). It runs the gateway as a launchd background service, keeps the full chat history in a local SQLite database, and hosts the models through Ollama.
-
-- The phone is a thin client: the React Native UI talks to a Rust networking core through Kotlin and UniFFI. The core sends requests to the gateway and receives the model's reply as a live token stream over server-sent events.
-
-The app works exactly when it can reach your Mac: on the same network, or from anywhere in the world through your private Tailscale network, as long as the Mac is awake and running. When the Mac is unreachable, you can't chat or browse past conversations until the connection is back.
-
-<br>
+The phone is a thin client. The React Native UI calls a Rust networking core through Kotlin and UniFFI; that core sends authenticated requests to Mai and receives live response streams. Chat history stays on the backend and is available whenever the phone can reach the Mac through Tailscale.
 
 ## Security
 
-Bridge keeps inference and application data on hardware you control. Ollama runs the model on the Mac, chat history is stored in SQLite on the Mac, and the Android app only renders the UI and exchanges messages with the gateway.
+Bridge requires HTTPS for every non-loopback backend URL. Reaching the backend requires both access to the private Tailscale network and the Mai bearer token, which the app stores in Android's credential storage.
 
-The gateway listens on `127.0.0.1:8787` by default, so it is not directly reachable from the Mac's LAN or the public internet. Tailscale Serve exposes that loopback service only inside your private tailnet through a stable `https://<machine>.<tailnet>.ts.net` address.
+Keep the backend URL and token private. Never add them to this repository or package them into an APK.
 
-Reaching the gateway requires two independent things:
+## Prerequisites
 
-1. The device must be authorized to reach the Mac through Tailscale.
-2. The client must present the Bridge API token on every request.
+Install and configure [Mai](https://github.com/JosephBARBIERDARNAL/mai) on the Mac first. Keep its Tailscale HTTPS URL and API token for the app configuration step.
 
-<br>
+For Android development on macOS, install Homebrew and then:
 
-## Installation
+```bash
+brew install git just bun rustup
+brew install --cask temurin android-commandlinetools
+```
 
-> [!WARNING]
-> Installation is complicated at the moment.
+Add Rust and the Android tools to your shell path:
 
-- **1. Install the macOS prerequisites.** Install [Homebrew](https://brew.sh/) first, then install the command-line tools, Java, Ollama, Tailscale, and the Android SDK tools:
+```bash
+echo 'export PATH="$(brew --prefix rustup)/bin:$PATH"' >> ~/.zshrc
+echo 'export ANDROID_HOME="$(brew --prefix)/share/android-commandlinetools"' >> ~/.zshrc
+echo 'export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+rustup default stable
+```
 
-  ```bash
-  brew install git just bun rustup ollama
-  brew install --cask temurin android-commandlinetools tailscale-app
-  ```
+Install the required Android packages and accept the licenses:
 
-  Add Rust and the Android tools to your shell path:
+```bash
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.1" "ndk;27.3.13750724" "cmake;3.22.1"
+sdkmanager --licenses
+```
 
-  ```bash
-  echo 'export PATH="$(brew --prefix rustup)/bin:$PATH"' >> ~/.zshrc
-  echo 'export ANDROID_HOME="$(brew --prefix)/share/android-commandlinetools"' >> ~/.zshrc
-  echo 'export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"' >> ~/.zshrc
-  source ~/.zshrc
-  rustup default stable
-  ```
+## Development setup
 
-- **2. Install the required Android packages.** Accept the Android licenses when prompted:
+Clone Bridge and install its dependencies:
 
-  ```bash
-  sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.1" "ndk;27.3.13750724" "cmake;3.22.1"
-  sdkmanager --licenses
-  ```
+```bash
+git clone https://github.com/JosephBARBIERDARNAL/bridge.git
+cd bridge
+just install
+```
 
-- **3. Clone Bridge and install its dependencies.**
+Run the project checks with:
 
-  ```bash
-  git clone https://github.com/JosephBARBIERDARNAL/bridge.git
-  cd bridge
-  just install
-  ```
+```bash
+just fmt
+just check
+just test
+just android-build
+```
 
-- **4. Start Ollama and download the configured model.** The gateway expects `gemma4:26b` by default:
+## Install on Android
 
-  ```bash
-  brew services start ollama
-  ollama pull gemma4:26b
-  ```
+1. Install Tailscale on the phone and sign in to the same tailnet as the Mac running Mai.
+2. Enable **Developer options → USB debugging** on the phone.
+3. Connect and authorize the phone, then verify it is available:
 
-- **5. Connect the Mac to Tailscale.** Open the Tailscale app, sign in, and confirm that the Mac appears in your tailnet.
+   ```bash
+   adb devices
+   ```
 
-- **6. Install the Bridge gateway on the Mac.** This builds the Rust gateway, installs it as a persistent `launchd` background service, generates the API token, and configures Tailscale Serve:
+4. Build and install the standalone debug APK:
 
-  ```bash
-  just mac-install
-  just status
-  ```
+   ```bash
+   just android
+   ```
 
-  Retrieve the two values needed by Android:
+5. Open Bridge and enter the Mai Tailscale HTTPS URL and API token. Tap **Save and test**.
 
-  ```bash
-  tailscale serve status
-  cat "$HOME/Library/Application Support/Bridge/token"
-  ```
+After configuration, Bridge works whenever the phone can reach the Mac and Mai can reach the shared Ollama daemon. Reconnect the phone and run `just android` to install later client updates.
 
-  Keep the displayed `https://<machine>.<tailnet>.ts.net` URL and API token private.
+## Release APK
 
-- **7. Prepare the Android phone.** Install Tailscale from Google Play, sign in to the same tailnet, and enable **Developer options → USB debugging** in Android settings.
+Copy `apps/bridge/android/keystore.properties.example` to `keystore.properties`, configure a local signing keystore, and run:
 
-- **8. Connect and authorize the phone.** Connect it to the Mac by USB, accept the debugging authorization prompt on the phone, and verify the connection:
+```bash
+just apk
+```
 
-  ```bash
-  adb devices
-  ```
-
-  The device should appear with the status `device`, not `unauthorized`.
-
-- **9. Build and install Bridge on Android.** The debug APK is automatically signed and standalone; it does not require Metro or a release keystore:
-
-  ```bash
-  just android
-  ```
-
-- **10. Configure Bridge.** Open the app, enter the Tailscale HTTPS URL and API token from step 6, then tap **Save and test**. After the connection succeeds, the USB cable can be disconnected. Bridge will continue working whenever Tailscale is connected and the Mac is awake with Ollama and the gateway running.
-
-To install later updates, reconnect the phone and run `just android` again.
+Keystores, signing properties, APKs, and app credentials must remain local and uncommitted.

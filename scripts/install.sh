@@ -24,7 +24,7 @@ if [[ ! -d "$ANDROID_HOME/ndk/27.3.13750724" ]]; then
   exit 1
 fi
 
-for optional in ollama tailscale adb; do
+for optional in adb; do
   if ! command -v "$optional" >/dev/null; then
     echo "Note: $optional is not on PATH; it is required only for its related runtime command."
   fi

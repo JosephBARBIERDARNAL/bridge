@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "bridge-monorepo",
+      "name": "bridge-client",
     },
     "apps/bridge": {
       "name": "@bridge/app",

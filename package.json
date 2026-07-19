@@ -1,5 +1,5 @@
 {
-  "name": "bridge-monorepo",
+  "name": "bridge-client",
   "private": true,
   "packageManager": "bun@1.3.7",
   "overrides": {

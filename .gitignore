@@ -1,4 +1,5 @@
 /target/
+/mai/
 /node_modules/
 /apps/bridge/android/.gradle/
 /apps/bridge/android/.gradle-dist/

@@ -1,1 +1,0 @@
-ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '';

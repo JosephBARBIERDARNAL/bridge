@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gateway", "crates/android-core"]
+members = ["crates/android-core"]
 resolver = "2"
 
 [workspace.package]
@@ -8,24 +8,12 @@ license = "MIT"
 version = "0.1.0"
 
 [workspace.dependencies]
-anyhow = "1.0"
-async-stream = "0.3"
-async-trait = "0.1"
 axum = "0.8.9"
-chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
-ollama-rs = { version = "0.3.5", features = ["stream"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-schemars = "1.2"
-scraper = "0.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sqlx-core = { version = "=0.8.6", features = ["_rt-tokio", "migrate", "chrono", "uuid"] }
-sqlx-sqlite = { version = "=0.8.6", features = ["bundled", "migrate", "chrono", "uuid"] }
 thiserror = "2.0"
 tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = { version = "0.32.0", features = ["cli", "tokio"] }
 url = "2.5"
-uuid = { version = "1.0", features = ["v4", "serde"] }
